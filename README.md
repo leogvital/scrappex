@@ -370,6 +370,8 @@ The same `tab crashed`/`Connection refused` errors above don't just leak process
 
 This box is the user's own desktop, not a dedicated server — VSCode, a personal Chrome window, MariaDB, and the desktop shell are all competing for the same RAM as scrapperx's headless Chrome sessions, and swap was seen sitting completely full. Under that kind of pressure, `tab crashed` can happen on both the first attempt *and* the immediate retry, seconds apart — real production logs showed exactly that (X and xFree both crashing on attempt 2/2 within the same minute). Two changes address it: `_BROWSER_RETRY_ATTEMPTS` went from 2 to 3, and every retry (fresh search and "load more" resume alike) now does `time.sleep(2)` first, giving a momentary memory/CPU spike a chance to pass before spinning up another Chrome instance.
 
+A flat 2s backoff still wasn't enough for a longer dip: production logs later showed three separate searches (X, X again, xFree) all exhausting 3 attempts within a ~40s window before recovering on their own, and a personal Chrome tab was found pinning ~32% CPU continuously for 3.6h in the background — real, sustained contention, not a one-off blip. The backoff is now escalating (3s → 6s → 9s between attempts) and `_BROWSER_RETRY_ATTEMPTS` went from 3 to 4, giving up to ~25-30s of total retry window to ride out a longer dip before giving up.
+
 ### Background watchdog for sessions the reactive cleanup can't reach
 
 Retry and `_hard_kill_driver` both only run when a request handler actually notices something's wrong — neither helps if no new request ever comes in for the dead session. Two real gaps:

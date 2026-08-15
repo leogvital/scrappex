@@ -370,6 +370,8 @@ O próprio `_x_open_session()`/`_xf_open_session()` vazava o driver que ele mesm
 
 Essa máquina é o desktop pessoal do usuário, não um servidor dedicado — VSCode, uma janela do Chrome pessoal, MariaDB e o shell do desktop competem pela mesma RAM que as sessões headless do Chrome do scrapperx, e o swap foi visto completamente cheio. Sob esse tipo de pressão, um `tab crashed` pode acontecer tanto na primeira tentativa quanto na retentativa imediata, segundos depois — os logs reais de produção mostraram exatamente isso (X e xFree travando na tentativa 2/2 dentro do mesmo minuto). Duas mudanças resolvem isso: `_BROWSER_RETRY_ATTEMPTS` subiu de 2 pra 3, e toda retentativa (busca nova e retomada de "carregar mais") agora faz `time.sleep(2)` antes, dando uma chance de um pico momentâneo de memória/CPU passar antes de subir outra instância do Chrome.
 
+Um backoff fixo de 2s ainda não bastava pra uma contenção mais longa: os logs de produção depois mostraram três buscas separadas (X, X de novo, xFree) esgotando as 3 tentativas dentro de uma janela de ~40s antes de se recuperar sozinhas, e uma aba do Chrome pessoal foi flagrada consumindo ~32% de CPU continuamente por 3,6h em segundo plano — contenção real e sustentada, não um pico isolado. O backoff agora é escalonado (3s → 6s → 9s entre tentativas) e `_BROWSER_RETRY_ATTEMPTS` subiu de 3 pra 4, dando até ~25-30s de janela total de retry pra sobreviver a uma contenção mais longa antes de desistir.
+
 ### Watchdog em background pros casos que a limpeza reativa não alcança
 
 Retry e `_hard_kill_driver` só rodam quando um request handler de fato percebe que algo deu errado — nenhum dos dois ajuda se nenhuma requisição nova chegar pra sessão morta. Dois buracos reais:
