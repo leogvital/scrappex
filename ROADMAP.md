@@ -37,6 +37,7 @@ Status do projeto e próximos passos. Mantido junto com o [README.md](README.md)
 - Vazamento de ~1-1.5 GB de RAM por sessão do Chrome que trava sozinha (`_hard_kill_driver`)
 - Retry automático quando o Selenium (X ou xFree) cai com erro transiente de I/O do Chrome (`Connection refused`, `tab crashed`) — reabre a sessão e retoma de onde parou, sem duplicar itens já mostrados
 - Watchdog em background (`_watchdog_sweep`, a cada 120s) encerra sessões ociosas e mata processos chromedriver órfãos mais velhos que 15 min — cobre os casos que o cleanup reativo não pega (aba fechada sem nunca mais chamar "carregar mais", ou o próprio servidor sendo morto e perdendo o rastro da sessão)
+- Revalidação periódica dos cookies do X (`_cookie_revalidate_check`, a cada 30 min) — antes a sessão só era reconferida no boot ou ao clicar "Validar"; se expirasse com o servidor rodando, o app continuava achando que estava logado até um erro cru da API aparecer numa busca/upload
 
 ---
 
@@ -51,7 +52,6 @@ Status do projeto e próximos passos. Mantido junto com o [README.md](README.md)
 ## 🔧 Próximos passos propostos
 
 ### Robustez / manutenção
-- [ ] Revalidação periódica dos cookies do X (não só no boot) — hoje a sessão só é reconferida no restart ou ao clicar "Validar"
 - [ ] Alerta/log estruturado quando um scraper parar de bater (sinal de que o site mudou o HTML e o parser quebrou)
 
 ### Novas plataformas

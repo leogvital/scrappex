@@ -2650,6 +2650,43 @@ def _watchdog_loop():
 threading.Thread(target=_watchdog_loop, daemon=True, name="scrapperx-watchdog").start()
 
 
+# ── Periodic X cookie revalidation ────────────────────────────────────────────
+# Until now, session_state["logged_in"] was only (re)checked at server boot and
+# when the user manually clicked "Validar" — if the X session expired while the
+# server just kept running (the common case, since restarts are infrequent),
+# the app kept believing it was logged in until an actual search/upload hit a
+# raw X API error (see the earlier "OAuth access token has expired" incident).
+# Re-running the same validate_cookies() used at boot/"Validar" periodically
+# closes that gap: the UI flips to the re-auth screen within one interval of
+# the session actually expiring, instead of only on the next restart.
+_COOKIE_REVALIDATE_INTERVAL = 1800   # 30 min — cookies don't expire that fast;
+                                      # no reason to hit X's API more often than this
+
+
+def _cookie_revalidate_check():
+    if not os.path.exists(COOKIES_FILE):
+        return
+    try:
+        ok, msg = validate_cookies()
+        was_logged_in = session_state.get("logged_in")
+        session_state["logged_in"] = ok
+        if was_logged_in and not ok:
+            print(f"  Revalidação periódica: sessão do X expirou ({msg}).")
+        elif not was_logged_in and ok:
+            print("  Revalidação periódica: sessão do X voltou a ficar válida.")
+    except Exception as e:
+        print(f"  Revalidação periódica: erro ao validar cookies do X: {e}")
+
+
+def _cookie_revalidate_loop():
+    while True:
+        time.sleep(_COOKIE_REVALIDATE_INTERVAL)
+        _cookie_revalidate_check()
+
+
+threading.Thread(target=_cookie_revalidate_loop, daemon=True, name="scrapperx-cookie-revalidate").start()
+
+
 if __name__ == "__main__":
     print(f"📁 Download dir: {DOWNLOAD_DIR}")
     print(f"🍪 Cookies file: {COOKIES_FILE}")
