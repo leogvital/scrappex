@@ -597,7 +597,7 @@ _TRANSIENT_BROWSER_ERRORS = (
     "connection aborted", "remote end closed connection", "connection reset",
 )
 
-_BROWSER_RETRY_ATTEMPTS = 2  # 1 initial try + 1 retry with a fresh Chrome session
+_BROWSER_RETRY_ATTEMPTS = 3  # 1 initial try + 2 retries with a fresh Chrome session
 
 
 def _is_transient_browser_error(exc):
@@ -2075,6 +2075,7 @@ def search():
                 last_err = e
                 if attempt + 1 < _BROWSER_RETRY_ATTEMPTS and _is_transient_browser_error(e):
                     print(f"  xfree: sessão do navegador travou ({e}) — tentativa {attempt+2}/{_BROWSER_RETRY_ATTEMPTS}...")
+                    time.sleep(2)  # let a momentary memory/CPU spike pass before retrying
                     continue
                 break
         return jsonify({"error": f"Erro no navegador: {last_err}", "results": [], "has_more": False}), 500
@@ -2178,6 +2179,7 @@ def search():
             last_err = e
             if attempt + 1 < _BROWSER_RETRY_ATTEMPTS and _is_transient_browser_error(e):
                 print(f"  X: sessão do navegador travou ({e}) — tentativa {attempt+2}/{_BROWSER_RETRY_ATTEMPTS}...")
+                time.sleep(2)  # let a momentary memory/CPU spike pass before retrying
                 continue
             break
     return jsonify({"error": f"Erro no navegador: {last_err}", "results": [], "has_more": False}), 500
@@ -2216,6 +2218,7 @@ def search_more():
             print(f"  xfree: sessão do navegador travou ({e}) — tentando retomar 'carregar mais'...")
             saved = dict(_XF_SS)
             _xf_close()
+            time.sleep(2)  # let a momentary memory/CPU spike pass before reopening
             try:
                 driver = _xf_open_session(saved.get("category", "straight"), saved.get("query", ""))
                 _XF_SS.update({
@@ -2293,6 +2296,7 @@ def search_more():
         print(f"  X: sessão do navegador travou ({e}) — tentando retomar 'carregar mais'...")
         saved = dict(_SS)
         _ss_close()
+        time.sleep(2)  # let a momentary memory/CPU spike pass before reopening
         try:
             driver = _x_open_session(saved.get("type"), saved.get("url"), saved["need_video_check"])
             _SS.update({

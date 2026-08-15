@@ -39,6 +39,7 @@ Status do projeto e próximos passos. Mantido junto com o [README.md](README.md)
 - Watchdog em background (`_watchdog_sweep`, a cada 120s) encerra sessões ociosas e mata processos chromedriver órfãos mais velhos que 15 min — cobre os casos que o cleanup reativo não pega (aba fechada sem nunca mais chamar "carregar mais", ou o próprio servidor sendo morto e perdendo o rastro da sessão)
 - Revalidação periódica dos cookies do X (`_cookie_revalidate_check`, a cada 30 min) — antes a sessão só era reconferida no boot ou ao clicar "Validar"; se expirasse com o servidor rodando, o app continuava achando que estava logado até um erro cru da API aparecer numa busca/upload
 - Vazamento de processo `chromedriver` órfão quando a sessão do X/xFree caía logo na abertura (ex.: `invalid session id` por o Chrome ter fechado a conexão) — `_x_open_session`/`_xf_open_session` não tinham um `try/except` cobrindo todo o corpo, então qualquer erro fora do caminho já tratado (timeout) deixava o driver sem `quit()`; agora qualquer exceção durante a abertura mata o driver antes de propagar
+- Retries do X/xFree esgotando as duas tentativas de volta em segundos, sob pressão real de memória da máquina (é o desktop pessoal do usuário, não um servidor dedicado — VSCode, Chrome pessoal, mariadb e gnome-shell competem pela mesma RAM) — adicionado um `sleep(2)` antes de cada nova tentativa (busca nova e retomada de "carregar mais"), pra dar tempo de um pico momentâneo de memória/CPU passar, e o número de tentativas subiu de 2 para 3
 
 ---
 
