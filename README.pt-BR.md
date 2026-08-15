@@ -1,6 +1,6 @@
 # X Video Scraper
 
-*[Read in English](README.en.md)*
+*[Read in English](README.md)*
 
 Aplicação web local para buscar e baixar vídeos do **X (Twitter)**, **XHamster**, **XVideos**, **xFree** e **Pornhub**.
 
@@ -356,3 +356,12 @@ Quando o Chrome/chromedriver de uma sessão crasha sozinho (`tab crashed`, `Conn
 3. Varre **todos** os processos do sistema procurando o `--user-data-dir` único daquela sessão (tag salva em `drv._user_data_dir` na criação, em `_ss_driver()`) e mata qualquer processo cujo cmdline contenha esse caminho
 
 O passo 3 existe porque testar um walk pai→filho (`psutil.Process(pid).children()`) **não funciona** quando o chromedriver já está morto: os processos filhos são reparentados imediatamente (para fora da árvore do chromedriver morto), então perguntar "quais são os filhos desse PID" depois do crash não encontra nada — confirmado simulando o crash e testando (0 de 9 processos órfãos mortos com o walk; 9 de 9 mortos com a varredura por `--user-data-dir`). Não usa `killpg` — o chromedriver compartilha o grupo de processos do próprio Gunicorn, e matar o grupo derrubaria o servidor junto.
+
+### Retry automático em crashes transientes do navegador
+
+Os mesmos erros `tab crashed`/`Connection refused` acima não só vazam processos — sem retry, eles também aparecem como uma exceção Python crua direto pro usuário, no meio do que quer que ele estivesse fazendo quando o Chrome morreu. `_x_open_session()`/`_xf_open_session()` (X e xFree respectivamente) extraem o fluxo de "criar uma sessão do Chrome, logar / escolher categoria, esperar o conteúdo" pra fora dos route handlers, pra poder ser reaproveitado por:
+
+- **Uma busca nova** (`/api/search`): envolvida num loop de até `_BROWSER_RETRY_ATTEMPTS` (2) tentativas — numa falha transiente, a sessão morta é limpa (`_ss_close()`/`_xf_close()`, que agora também roda `_hard_kill_driver()`) e o fluxo inteiro tenta de novo do zero com uma instância nova do Chrome.
+- **"Carregar mais"** (`/api/search/more`): um crash no meio do scroll não dá pra simplesmente repetir a mesma chamada (o driver já era), então em vez disso a sessão é **reaberta** pra mesma busca (mesma URL/tipo pro X; mesma categoria/query pro xFree) e retomada — `seen_ids` e `scroll_count` são levados pra sessão nova antes, então a busca retomada naturalmente pula tudo que já foi mostrado em vez de devolver duplicatas.
+
+`_is_transient_browser_error()` compara a mensagem da exceção com assinaturas de crash conhecidas (`connection refused`, `tab crashed`, `errno 5`, `invalid session id`, etc.) — só essas são retentadas; um `TimeoutException` do Selenium genuinamente não encontrando resultados (ou a X pedindo login de novo) levanta `_NoResultsError` em vez disso e nunca é retentado, já que tentar de novo não mudaria esse resultado. Validado simulando `_xf_open_session`/`_x_open_session`/`_ss_fetch_page`/`_xf_fetch_page` falhando uma vez com as strings de erro exatas vistas em produção, confirmando: o retry dispara exatamente uma vez, erros não-transientes falham na hora sem tentar de novo, e uma retomada de "carregar mais" preserva corretamente `seen_ids`/`category`/`query` (ou `url`/`type` pro X) na sessão reaberta.

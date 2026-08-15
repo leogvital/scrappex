@@ -33,6 +33,9 @@ Status do projeto e próximos passos. Mantido junto com o [README.md](README.md)
 - Thumbnails faltando na Home do Pornhub (atributo de card diferente)
 - Duplicatas entre páginas na paginação do Pornhub (dedup por ID)
 - Erro de permissão do *control socket* do Gunicorn 26 (`--no-control-socket`)
+- Download travado ao clicar "Baixar" durante o carregamento automático de mais vídeos (worker `sync` do Gunicorn → `gthread` + 4 threads)
+- Vazamento de ~1-1.5 GB de RAM por sessão do Chrome que trava sozinha (`_hard_kill_driver`)
+- Retry automático quando o Selenium (X ou xFree) cai com erro transiente de I/O do Chrome (`Connection refused`, `tab crashed`) — reabre a sessão e retoma de onde parou, sem duplicar itens já mostrados
 
 ---
 
@@ -47,7 +50,6 @@ Status do projeto e próximos passos. Mantido junto com o [README.md](README.md)
 ## 🔧 Próximos passos propostos
 
 ### Robustez / manutenção
-- [ ] Retry automático quando o Selenium (X ou xFree) cair com erro transiente de I/O do Chrome
 - [ ] Revalidação periódica dos cookies do X (não só no boot) — hoje a sessão só é reconferida no restart ou ao clicar "Validar"
 - [ ] Watchdog para matar processos Chrome/chromedriver órfãos, caso uma sessão trave no meio
 - [ ] Alerta/log estruturado quando um scraper parar de bater (sinal de que o site mudou o HTML e o parser quebrou)

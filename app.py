@@ -545,6 +545,8 @@ _SS = {           # active scrape session (one at a time — personal tool)
     "id": None, "driver": None, "seen_ids": set(),   # dedup by tweet ID
     "need_video_check": False, "duration_filter": "any", "finished": False,
     "scroll_count": 0, "no_new_streak": 0, "last_used": 0,
+    "url": None, "type": None,   # kept so a crashed session can be reopened and
+                                  # resumed (see _is_transient_browser_error)
 }
 _SS_TIMEOUT  = 600   # seconds before an idle session is considered stale
 _SS_MAX_SCROLL = 60  # absolute scroll limit per session
@@ -569,11 +571,40 @@ _XF_SS = {
     "id": None, "driver": None, "seen_ids": set(),
     "duration": "any", "finished": False,
     "scroll_count": 0, "no_new_streak": 0, "last_used": 0,
+    "category": "straight", "query": "",   # kept so a crashed session can be
+                                            # reopened and resumed
 }
 _XF_SS_TIMEOUT    = 600
 _XF_SS_MAX_SCROLL = 40
 
 _XF_CATEGORY_PATH = {"straight": "/", "gay": "/gay", "trans": "/trans", "all": "/all"}
+
+
+class _NoResultsError(Exception):
+    """A Selenium search that legitimately found nothing (or needs a fresh X
+    login) — as opposed to the browser/chromedriver crashing, which is the
+    retryable case _is_transient_browser_error()/the search routes handle."""
+
+
+# Substrings seen in real crashes so far: chromedriver dying mid-session leaves
+# Selenium unable to reach it ("Connection refused" on its local control port —
+# see README's "Robust cleanup of stuck processes" section) or the tab itself
+# crashing under memory pressure. Matched case-insensitively against str(exc).
+_TRANSIENT_BROWSER_ERRORS = (
+    "connection refused", "tab crashed", "errno 5", "chrome not reachable",
+    "session not created", "invalid session id", "disconnected",
+    "no such window", "target window already closed", "broken pipe",
+    "connection aborted", "remote end closed connection", "connection reset",
+)
+
+_BROWSER_RETRY_ATTEMPTS = 2  # 1 initial try + 1 retry with a fresh Chrome session
+
+
+def _is_transient_browser_error(exc):
+    """True if `exc` looks like a dead/crashed Chrome or chromedriver — worth
+    silently retrying with a fresh session instead of surfacing a raw Python
+    exception to the user."""
+    return any(marker in str(exc).lower() for marker in _TRANSIENT_BROWSER_ERRORS)
 
 
 _SITE_HEADERS = {
@@ -1128,6 +1159,83 @@ def _ss_inject_cookies(driver):
     print(f"  Injected {injected} cookies")
 
 
+def _x_open_session(t, url, need_vc):
+    """
+    Create a headless Chrome session, log into X via cookie injection, and
+    navigate to `url`, waiting for tweets to render (clicking the "Seguindo"
+    tab first if `t == "following"`). Extracted out of the /api/search route
+    so both the initial search and the crash-retry path (see
+    _is_transient_browser_error) can reuse the exact same flow.
+
+    Raises _NoResultsError if the page genuinely has no tweets or needs login
+    (not retryable) — any other exception is a candidate transient browser
+    crash for the caller to retry. Returns the driver on success.
+    """
+    import time
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.common.by import By
+    from selenium.common.exceptions import TimeoutException
+
+    driver = _ss_driver()
+    driver.get("https://x.com/")
+    WebDriverWait(driver, 15).until(
+        lambda d: d.execute_script("return document.readyState") == "complete"
+    )
+    time.sleep(1.5)
+    _ss_inject_cookies(driver)
+
+    driver.get("https://x.com/")
+    WebDriverWait(driver, 15).until(
+        lambda d: d.execute_script("return document.readyState") == "complete"
+    )
+    time.sleep(2)
+
+    driver.get(url)
+
+    try:
+        WebDriverWait(driver, 30).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, 'article[data-testid="tweet"]'))
+        )
+    except TimeoutException:
+        title, cur = "", ""
+        try:
+            title = driver.title
+            cur   = driver.current_url
+        except Exception:
+            pass
+        needs_login = "login" in cur.lower() or "login" in title.lower()
+        driver.quit()
+        raise _NoResultsError(
+            "X solicitou login — reimporte os cookies." if needs_login
+            else "Nenhum resultado encontrado para esta busca."
+        )
+
+    time.sleep(3)
+
+    if t == "following":
+        try:
+            clicked = False
+            for tab_el in driver.find_elements(By.CSS_SELECTOR, '[role="tab"]'):
+                label = (tab_el.text or "").strip().lower()
+                if "seguindo" in label or "following" in label:
+                    driver.execute_script("arguments[0].click()", tab_el)
+                    clicked = True
+                    break
+            if clicked:
+                time.sleep(3)
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, 'article[data-testid="tweet"]'))
+                )
+                time.sleep(2)
+            else:
+                print('  Aba "Seguindo" não encontrada — usando "Para você".')
+        except Exception as e:
+            print(f'  Erro ao alternar para "Seguindo": {e}')
+
+    return driver
+
+
 _STATUS_RE = __import__("re").compile(r"x\.com/([^/?#]+)/status/(\d+)")
 
 
@@ -1368,10 +1476,57 @@ def _xf_close():
         "id": None, "driver": None, "seen_ids": set(),
         "duration": "any", "finished": False,
         "scroll_count": 0, "no_new_streak": 0, "last_used": 0,
+        "category": "straight", "query": "",
     })
 
 
 atexit.register(_xf_close)   # clean up on server shutdown
+
+
+def _xf_open_session(category, query):
+    """
+    Create a headless Chrome session, navigate to the given xFree category, and
+    type `query` into the site's own search box if provided (see the category
+    note in _XF_SS's definition for why this can't just be a query param).
+    Extracted out of the /api/search route so both the initial search and the
+    crash-retry path (see _is_transient_browser_error) can reuse the same flow.
+
+    Raises _NoResultsError if the category page never renders any videos (not
+    retryable) — any other exception is a candidate transient browser crash
+    for the caller to retry. Returns the driver on success.
+    """
+    import time
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.common.keys import Keys
+    from selenium.common.exceptions import TimeoutException
+
+    driver = _ss_driver()
+    driver.get(f"https://www.xfree.com{_XF_CATEGORY_PATH.get(category, '/')}")
+    try:
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, ".wall__item"))
+        )
+    except TimeoutException:
+        driver.quit()
+        raise _NoResultsError("Nenhum vídeo encontrado no xfree.com.")
+    time.sleep(1)
+
+    if query:
+        # Category is Vuex state set by the page we just loaded — searching via
+        # the site's own search box (client-side nav) keeps that state, unlike
+        # navigating straight to a /search?q=... URL, which resets it.
+        inp = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[name=q]"))
+        )
+        driver.execute_script("arguments[0].click()", inp)
+        inp.send_keys(query)
+        inp.send_keys(Keys.ENTER)
+        WebDriverWait(driver, 15).until(lambda drv: "search" in drv.current_url)
+        time.sleep(1.5)
+
+    return driver
 
 
 def _xf_scroll_down(driver):
@@ -1848,9 +2003,6 @@ def logout():
 @app.route("/api/search", methods=["POST"])
 def search():
     import urllib.parse, time
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-    from selenium.webdriver.common.by import By
 
     d = request.json or {}
     q        = d.get("query", "").strip()
@@ -1860,69 +2012,54 @@ def search():
 
     # ── xFree (home + search) — client-side infinite scroll, needs a real browser ──
     if platform == "xfree":
-        from selenium.webdriver.common.keys import Keys
-
         category = d.get("category", "straight")
         if category not in _XF_CATEGORY_PATH:
             category = "straight"
         _xf_close()
         duration = d.get("duration", "any")
-        driver = None
-        try:
-            driver = _ss_driver()
-            driver.get(f"https://www.xfree.com{_XF_CATEGORY_PATH[category]}")
+        last_err = None
+        for attempt in range(_BROWSER_RETRY_ATTEMPTS):
+            driver = None
             try:
-                WebDriverWait(driver, 20).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, ".wall__item"))
-                )
-            except Exception:
-                driver.quit()
-                return jsonify({"error": "Nenhum vídeo encontrado no xfree.com.",
-                                "results": [], "has_more": False})
-            time.sleep(1)
+                driver = _xf_open_session(category, q)
 
-            if q:
-                # Category is Vuex state set by the page we just loaded — searching via
-                # the site's own search box (client-side nav) keeps that state, unlike
-                # navigating straight to a /search?q=... URL, which resets it.
-                try:
-                    inp = WebDriverWait(driver, 10).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "input[name=q]"))
-                    )
-                    driver.execute_script("arguments[0].click()", inp)
-                    inp.send_keys(q)
-                    inp.send_keys(Keys.ENTER)
-                    WebDriverWait(driver, 15).until(lambda drv: "search" in drv.current_url)
-                    time.sleep(1.5)
-                except Exception as e:
-                    driver.quit()
-                    return jsonify({"error": f"Erro ao buscar no xfree: {e}",
+                sid = str(uuid.uuid4())[:12]
+                _XF_SS.update({
+                    "id": sid, "driver": driver, "seen_ids": set(),
+                    "duration": duration, "finished": False,
+                    "scroll_count": 0, "no_new_streak": 0, "last_used": time.time(),
+                    "category": category, "query": q,
+                })
+                driver = None  # ownership transferred to _XF_SS; don't quit it below
+
+                results, has_more = _xf_fetch_page(page_size)
+                if not results and not has_more:
+                    return jsonify({"error": "Nenhum vídeo encontrado no xfree.com.",
                                     "results": [], "has_more": False})
-
-            sid = str(uuid.uuid4())[:12]
-            _XF_SS.update({
-                "id": sid, "driver": driver, "seen_ids": set(),
-                "duration": duration, "finished": False,
-                "scroll_count": 0, "no_new_streak": 0, "last_used": time.time(),
-            })
-            driver = None  # ownership transferred to _XF_SS; don't quit it below
-
-            results, has_more = _xf_fetch_page(page_size)
-            if not results and not has_more:
-                return jsonify({"error": "Nenhum vídeo encontrado no xfree.com.",
-                                "results": [], "has_more": False})
-            return jsonify({
-                "results": results, "count": len(results),
-                "has_more": has_more, "search_id": sid,
-            })
-        except Exception as e:
-            if driver is not None:
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
-            _xf_close()
-            return jsonify({"error": f"Erro no navegador: {e}", "results": [], "has_more": False}), 500
+                return jsonify({
+                    "results": results, "count": len(results),
+                    "has_more": has_more, "search_id": sid,
+                })
+            except _NoResultsError as e:
+                if driver is not None:
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+                return jsonify({"error": str(e), "results": [], "has_more": False})
+            except Exception as e:
+                if driver is not None:
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+                _xf_close()
+                last_err = e
+                if attempt + 1 < _BROWSER_RETRY_ATTEMPTS and _is_transient_browser_error(e):
+                    print(f"  xfree: sessão do navegador travou ({e}) — tentativa {attempt+2}/{_BROWSER_RETRY_ATTEMPTS}...")
+                    continue
+                break
+        return jsonify({"error": f"Erro no navegador: {last_err}", "results": [], "has_more": False}), 500
 
     # ── External sites (XHamster, XVideos, Pornhub) ───────────────────────────
     if platform in ("xhamster", "xvideos", "pornhub"):
@@ -1982,97 +2119,50 @@ def search():
         url, need_vc = f"https://x.com/search?q={enc}&src=typed_query&f=video", False
 
     _ss_close()
-    driver = None
-    try:
-        driver = _ss_driver()
-
-        driver.get("https://x.com/")
-        WebDriverWait(driver, 15).until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
-        )
-        time.sleep(1.5)
-        _ss_inject_cookies(driver)
-
-        driver.get("https://x.com/")
-        WebDriverWait(driver, 15).until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
-        )
-        time.sleep(2)
-
-        driver.get(url)
-
+    last_err = None
+    for attempt in range(_BROWSER_RETRY_ATTEMPTS):
+        driver = None
         try:
-            WebDriverWait(driver, 30).until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, 'article[data-testid="tweet"]')
-                )
-            )
-        except Exception:
-            title = ""
-            cur   = ""
-            try:
-                title = driver.title
-                cur   = driver.current_url
-            except Exception:
-                pass
-            driver.quit()
-            if "login" in cur.lower() or "login" in title.lower():
-                return jsonify({"error": "X solicitou login — reimporte os cookies.",
-                                "results": [], "has_more": False})
-            return jsonify({"error": "Nenhum resultado encontrado para esta busca.",
-                            "results": [], "has_more": False})
+            driver = _x_open_session(t, url, need_vc)
 
-        time.sleep(3)
+            sid = str(uuid.uuid4())[:12]
+            _SS.update({
+                "id": sid, "driver": driver, "seen_ids": set(),
+                "need_video_check": need_vc, "duration_filter": d.get("duration", "any"),
+                "finished": False,
+                "scroll_count": 0, "no_new_streak": 0, "last_used": time.time(),
+                "url": url, "type": t,
+            })
+            driver = None  # ownership transferred to _SS; don't quit it below
 
-        # ── "Seguindo": click the Following tab on the home timeline ──────────
-        if t == "following":
-            try:
-                clicked = False
-                for tab_el in driver.find_elements(By.CSS_SELECTOR, '[role="tab"]'):
-                    label = (tab_el.text or "").strip().lower()
-                    if "seguindo" in label or "following" in label:
-                        driver.execute_script("arguments[0].click()", tab_el)
-                        clicked = True
-                        break
-                if clicked:
-                    time.sleep(3)
-                    WebDriverWait(driver, 15).until(
-                        EC.presence_of_element_located(
-                            (By.CSS_SELECTOR, 'article[data-testid="tweet"]')
-                        )
-                    )
-                    time.sleep(2)
-                else:
-                    print('  Aba "Seguindo" não encontrada — usando "Para você".')
-            except Exception as e:
-                print(f'  Erro ao alternar para "Seguindo": {e}')
-
-        sid = str(uuid.uuid4())[:12]
-        _SS.update({
-            "id": sid, "driver": driver, "seen_ids": set(),
-            "need_video_check": need_vc, "duration_filter": d.get("duration", "any"),
-            "finished": False,
-            "scroll_count": 0, "no_new_streak": 0, "last_used": time.time(),
-        })
-        driver = None  # ownership transferred to _SS; don't quit it below
-
-        results, has_more = _ss_fetch_page(page_size)
-        return jsonify({
-            "results": results, "count": len(results),
-            "has_more": has_more, "search_id": sid,
-        })
-
-    except Exception as e:
-        # If the crash happened before `driver` was handed off to _SS (e.g.
-        # during initial navigation), _ss_close() below won't see it — quit
-        # it here so the Chrome/chromedriver process doesn't leak.
-        if driver is not None:
-            try:
-                driver.quit()
-            except Exception:
-                pass
-        _ss_close()
-        return jsonify({"error": f"Erro no navegador: {e}", "results": [], "has_more": False}), 500
+            results, has_more = _ss_fetch_page(page_size)
+            return jsonify({
+                "results": results, "count": len(results),
+                "has_more": has_more, "search_id": sid,
+            })
+        except _NoResultsError as e:
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+            return jsonify({"error": str(e), "results": [], "has_more": False})
+        except Exception as e:
+            # If the crash happened before `driver` was handed off to _SS (e.g.
+            # during initial navigation), _ss_close() below won't see it — quit
+            # it here so the Chrome/chromedriver process doesn't leak.
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+            _ss_close()
+            last_err = e
+            if attempt + 1 < _BROWSER_RETRY_ATTEMPTS and _is_transient_browser_error(e):
+                print(f"  X: sessão do navegador travou ({e}) — tentativa {attempt+2}/{_BROWSER_RETRY_ATTEMPTS}...")
+                continue
+            break
+    return jsonify({"error": f"Erro no navegador: {last_err}", "results": [], "has_more": False}), 500
 
 
 @app.route("/api/search/more", methods=["POST"])
@@ -2090,11 +2180,42 @@ def search_more():
                             "results": [], "has_more": False}), 400
         if _XF_SS["finished"]:
             return jsonify({"results": [], "has_more": False, "search_id": sid})
-        results, has_more = _xf_fetch_page(page_size)
-        return jsonify({
-            "results": results, "count": len(results),
-            "has_more": has_more, "search_id": sid,
-        })
+        try:
+            results, has_more = _xf_fetch_page(page_size)
+            return jsonify({
+                "results": results, "count": len(results),
+                "has_more": has_more, "search_id": sid,
+            })
+        except Exception as e:
+            if not _is_transient_browser_error(e):
+                _xf_close()
+                return jsonify({"error": f"Erro ao carregar mais: {e}",
+                                "results": [], "has_more": False}), 500
+            # chromedriver/Chrome died mid-scroll — reopen on the same category
+            # (+ redo the search box if there was a query) and keep going from
+            # where we left off; seen_ids/scroll_count carry over so already-
+            # shown items get filtered rather than repeated.
+            print(f"  xfree: sessão do navegador travou ({e}) — tentando retomar 'carregar mais'...")
+            saved = dict(_XF_SS)
+            _xf_close()
+            try:
+                driver = _xf_open_session(saved.get("category", "straight"), saved.get("query", ""))
+                _XF_SS.update({
+                    "id": sid, "driver": driver, "seen_ids": saved["seen_ids"],
+                    "duration": saved["duration"], "finished": False,
+                    "scroll_count": saved["scroll_count"], "no_new_streak": 0,
+                    "last_used": time.time(),
+                    "category": saved.get("category", "straight"), "query": saved.get("query", ""),
+                })
+                results, has_more = _xf_fetch_page(page_size)
+                return jsonify({
+                    "results": results, "count": len(results),
+                    "has_more": has_more, "search_id": sid,
+                })
+            except Exception as e2:
+                _xf_close()
+                return jsonify({"error": f"Erro ao carregar mais: {e2}",
+                                "results": [], "has_more": False}), 500
 
     # ── Site session (XHamster / XVideos) ────────────────────────────────────
     if _SITE_SS["id"] == sid:
@@ -2144,9 +2265,33 @@ def search_more():
             "has_more": has_more, "search_id": sid,
         })
     except Exception as e:
+        if not _is_transient_browser_error(e):
+            _ss_close()
+            return jsonify({"error": f"Erro ao carregar mais: {e}",
+                            "results": [], "has_more": False}), 500
+        # chromedriver/Chrome died mid-scroll — reopen the same search and keep
+        # going from where we left off; seen_ids/scroll_count carry over so
+        # already-shown tweets get filtered rather than repeated.
+        print(f"  X: sessão do navegador travou ({e}) — tentando retomar 'carregar mais'...")
+        saved = dict(_SS)
         _ss_close()
-        return jsonify({"error": f"Erro ao carregar mais: {e}",
-                        "results": [], "has_more": False}), 500
+        try:
+            driver = _x_open_session(saved.get("type"), saved.get("url"), saved["need_video_check"])
+            _SS.update({
+                "id": sid, "driver": driver, "seen_ids": saved["seen_ids"],
+                "need_video_check": saved["need_video_check"], "duration_filter": saved["duration_filter"],
+                "finished": False, "scroll_count": saved["scroll_count"], "no_new_streak": 0,
+                "last_used": time.time(), "url": saved.get("url"), "type": saved.get("type"),
+            })
+            results, has_more = _ss_fetch_page(page_size)
+            return jsonify({
+                "results": results, "count": len(results),
+                "has_more": has_more, "search_id": sid,
+            })
+        except Exception as e2:
+            _ss_close()
+            return jsonify({"error": f"Erro ao carregar mais: {e2}",
+                            "results": [], "has_more": False}), 500
 
 
 @app.route("/api/preview", methods=["POST"])
