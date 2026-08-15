@@ -38,6 +38,7 @@ Status do projeto e próximos passos. Mantido junto com o [README.md](README.md)
 - Retry automático quando o Selenium (X ou xFree) cai com erro transiente de I/O do Chrome (`Connection refused`, `tab crashed`) — reabre a sessão e retoma de onde parou, sem duplicar itens já mostrados
 - Watchdog em background (`_watchdog_sweep`, a cada 120s) encerra sessões ociosas e mata processos chromedriver órfãos mais velhos que 15 min — cobre os casos que o cleanup reativo não pega (aba fechada sem nunca mais chamar "carregar mais", ou o próprio servidor sendo morto e perdendo o rastro da sessão)
 - Revalidação periódica dos cookies do X (`_cookie_revalidate_check`, a cada 30 min) — antes a sessão só era reconferida no boot ou ao clicar "Validar"; se expirasse com o servidor rodando, o app continuava achando que estava logado até um erro cru da API aparecer numa busca/upload
+- Vazamento de processo `chromedriver` órfão quando a sessão do X/xFree caía logo na abertura (ex.: `invalid session id` por o Chrome ter fechado a conexão) — `_x_open_session`/`_xf_open_session` não tinham um `try/except` cobrindo todo o corpo, então qualquer erro fora do caminho já tratado (timeout) deixava o driver sem `quit()`; agora qualquer exceção durante a abertura mata o driver antes de propagar
 
 ---
 

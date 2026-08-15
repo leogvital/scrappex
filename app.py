@@ -1178,62 +1178,71 @@ def _x_open_session(t, url, need_vc):
     from selenium.common.exceptions import TimeoutException
 
     driver = _ss_driver()
-    driver.get("https://x.com/")
-    WebDriverWait(driver, 15).until(
-        lambda d: d.execute_script("return document.readyState") == "complete"
-    )
-    time.sleep(1.5)
-    _ss_inject_cookies(driver)
-
-    driver.get("https://x.com/")
-    WebDriverWait(driver, 15).until(
-        lambda d: d.execute_script("return document.readyState") == "complete"
-    )
-    time.sleep(2)
-
-    driver.get(url)
-
     try:
-        WebDriverWait(driver, 30).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, 'article[data-testid="tweet"]'))
+        driver.get("https://x.com/")
+        WebDriverWait(driver, 15).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
         )
-    except TimeoutException:
-        title, cur = "", ""
+        time.sleep(1.5)
+        _ss_inject_cookies(driver)
+
+        driver.get("https://x.com/")
+        WebDriverWait(driver, 15).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+        time.sleep(2)
+
+        driver.get(url)
+
         try:
-            title = driver.title
-            cur   = driver.current_url
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'article[data-testid="tweet"]'))
+            )
+        except TimeoutException:
+            title, cur = "", ""
+            try:
+                title = driver.title
+                cur   = driver.current_url
+            except Exception:
+                pass
+            needs_login = "login" in cur.lower() or "login" in title.lower()
+            driver.quit()
+            raise _NoResultsError(
+                "X solicitou login — reimporte os cookies." if needs_login
+                else "Nenhum resultado encontrado para esta busca."
+            )
+
+        time.sleep(3)
+
+        if t == "following":
+            try:
+                clicked = False
+                for tab_el in driver.find_elements(By.CSS_SELECTOR, '[role="tab"]'):
+                    label = (tab_el.text or "").strip().lower()
+                    if "seguindo" in label or "following" in label:
+                        driver.execute_script("arguments[0].click()", tab_el)
+                        clicked = True
+                        break
+                if clicked:
+                    time.sleep(3)
+                    WebDriverWait(driver, 15).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, 'article[data-testid="tweet"]'))
+                    )
+                    time.sleep(2)
+                else:
+                    print('  Aba "Seguindo" não encontrada — usando "Para você".')
+            except Exception as e:
+                print(f'  Erro ao alternar para "Seguindo": {e}')
+
+        return driver
+    except _NoResultsError:
+        raise
+    except Exception:
+        try:
+            driver.quit()
         except Exception:
             pass
-        needs_login = "login" in cur.lower() or "login" in title.lower()
-        driver.quit()
-        raise _NoResultsError(
-            "X solicitou login — reimporte os cookies." if needs_login
-            else "Nenhum resultado encontrado para esta busca."
-        )
-
-    time.sleep(3)
-
-    if t == "following":
-        try:
-            clicked = False
-            for tab_el in driver.find_elements(By.CSS_SELECTOR, '[role="tab"]'):
-                label = (tab_el.text or "").strip().lower()
-                if "seguindo" in label or "following" in label:
-                    driver.execute_script("arguments[0].click()", tab_el)
-                    clicked = True
-                    break
-            if clicked:
-                time.sleep(3)
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, 'article[data-testid="tweet"]'))
-                )
-                time.sleep(2)
-            else:
-                print('  Aba "Seguindo" não encontrada — usando "Para você".')
-        except Exception as e:
-            print(f'  Erro ao alternar para "Seguindo": {e}')
-
-    return driver
+        raise
 
 
 _STATUS_RE = __import__("re").compile(r"x\.com/([^/?#]+)/status/(\d+)")
@@ -1503,30 +1512,39 @@ def _xf_open_session(category, query):
     from selenium.common.exceptions import TimeoutException
 
     driver = _ss_driver()
-    driver.get(f"https://www.xfree.com{_XF_CATEGORY_PATH.get(category, '/')}")
     try:
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".wall__item"))
-        )
-    except TimeoutException:
-        driver.quit()
-        raise _NoResultsError("Nenhum vídeo encontrado no xfree.com.")
-    time.sleep(1)
+        driver.get(f"https://www.xfree.com{_XF_CATEGORY_PATH.get(category, '/')}")
+        try:
+            WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".wall__item"))
+            )
+        except TimeoutException:
+            driver.quit()
+            raise _NoResultsError("Nenhum vídeo encontrado no xfree.com.")
+        time.sleep(1)
 
-    if query:
-        # Category is Vuex state set by the page we just loaded — searching via
-        # the site's own search box (client-side nav) keeps that state, unlike
-        # navigating straight to a /search?q=... URL, which resets it.
-        inp = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[name=q]"))
-        )
-        driver.execute_script("arguments[0].click()", inp)
-        inp.send_keys(query)
-        inp.send_keys(Keys.ENTER)
-        WebDriverWait(driver, 15).until(lambda drv: "search" in drv.current_url)
-        time.sleep(1.5)
+        if query:
+            # Category is Vuex state set by the page we just loaded — searching via
+            # the site's own search box (client-side nav) keeps that state, unlike
+            # navigating straight to a /search?q=... URL, which resets it.
+            inp = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[name=q]"))
+            )
+            driver.execute_script("arguments[0].click()", inp)
+            inp.send_keys(query)
+            inp.send_keys(Keys.ENTER)
+            WebDriverWait(driver, 15).until(lambda drv: "search" in drv.current_url)
+            time.sleep(1.5)
 
-    return driver
+        return driver
+    except _NoResultsError:
+        raise
+    except Exception:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        raise
 
 
 def _xf_scroll_down(driver):
