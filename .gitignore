@@ -1,0 +1,18 @@
+# Ambiente virtual Python
+venv/
+__pycache__/
+*.pyc
+
+# Segredos / config local (veja .env.local.example)
+.env.local
+.flask_secret_key
+
+# Cookies do X (ficam em /tmp, mas por precaução)
+x_cookies.txt
+
+# Ferramentas locais
+.claude/settings.local.json
+
+# SO
+.DS_Store
+Thumbs.db

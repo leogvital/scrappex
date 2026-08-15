@@ -1,0 +1,1725 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>X Video Scraper</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: #000; overflow-x: hidden; max-width: 100%; }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: #0d1117; }
+    ::-webkit-scrollbar-thumb { background: #2f3b47; border-radius: 3px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
+    input, textarea { outline: none; }
+    .vcard:hover { transform: translateY(-2px) !important; border-color: #2f3b47 !important; box-shadow: 0 8px 24px rgba(0,0,0,.4) !important; }
+
+    /* ── Responsive (mobile) ─────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .page-container { padding-left: 12px !important; padding-right: 12px !important; }
+      .hdr-row { gap: 8px !important; }
+      .hdr-extra, .hdr-title-text, .hdr-btn-label { display: none !important; }
+      .tabsbar { flex-wrap: nowrap !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+      .tabsbar::-webkit-scrollbar { display: none; }
+      .tabsbar > button { flex: 0 0 auto !important; min-width: 92px; }
+    }
+    @media (max-width: 480px) {
+      .player-controls { gap: 6px !important; }
+      .player-controls button { padding: 0 10px !important; font-size: 12px !important; min-width: 40px !important; height: 38px !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // API base: empty string = same origin (Flask serves both frontend and API)
+    const API = "/api";
+
+    // ── Icons ────────────────────────────────────────────────────────────
+    const XI    = () => <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.747l7.73-8.835L1.254 2.25H8.08l4.259 5.63zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>;
+    const SrchI = () => <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>;
+    const DlI   = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>;
+    const HomeI = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>;
+    const HashI = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>;
+    const UserI = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
+    const UsersI= () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
+    const KeyI  = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>;
+    const CloseI= () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>;
+    const PencilI=() => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>;
+    const FolderI = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>;
+    const TrashI  = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>;
+    const PauseI  = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>;
+    const SkipBackI    = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><polygon points="19 20 9 12 19 4 19 20"/><rect x="5" y="4" width="2" height="16"/></svg>;
+    const SkipForwardI = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><polygon points="5 4 15 12 5 20 5 4"/><rect x="17" y="4" width="2" height="16"/></svg>;
+
+    const fmt  = s => { if (!s) return "—"; const m=Math.floor(s/60),sc=Math.floor(s%60); return m+":"+sc.toString().padStart(2,"0"); };
+    const fmtV = n => { if (!n) return ""; if (n>=1e6) return (n/1e6).toFixed(1)+"M"; if (n>=1e3) return (n/1e3).toFixed(1)+"K"; return n; };
+
+    const Spin = ({size=20,color="#1d9bf0"}) => (
+      <div style={{width:size,height:size,border:"2px solid rgba(255,255,255,0.12)",borderTopColor:color,borderRadius:"50%",animation:"spin .7s linear infinite",flexShrink:0}}/>
+    );
+
+    const BROWSERS = [
+      {id:"chrome",label:"Chrome",emoji:"🟡"},
+      {id:"firefox",label:"Firefox",emoji:"🟠"},
+      {id:"edge",label:"Edge",emoji:"🔵"},
+      {id:"opera",label:"Opera",emoji:"🔴"},
+      {id:"brave",label:"Brave",emoji:"🦁"},
+    ];
+
+    // ── Auth Screen ──────────────────────────────────────────────────────
+    function AuthScreen({ onSuccess }) {
+      const [tab, setTab]       = useState("auto");
+      const [browser, setBrowser] = useState("chrome");
+      const [pasteText, setPaste] = useState("");
+      const [loading, setLoading] = useState(false);
+      const [msg, setMsg]       = useState(null);
+      const EXT = "https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm";
+
+      async function doImport(endpoint, body) {
+        setLoading(true); setMsg(null);
+        try {
+          const r = await fetch(API+endpoint, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+          const d = await r.json();
+          if (d.success) { setMsg({type:"ok",text:d.message}); setTimeout(onSuccess, 1200); }
+          else setMsg({type:"err",text:d.error});
+        } catch(e) { setMsg({type:"err",text:"Erro de conexão: "+e.message}); }
+        setLoading(false);
+      }
+
+      const tStyle = t => ({
+        flex:1,padding:"9px 6px",borderRadius:8,border:"none",
+        background:tab===t?"rgba(29,155,240,.15)":"transparent",
+        color:tab===t?"#1d9bf0":"#71767b",
+        fontSize:12,fontWeight:tab===t?700:400,cursor:"pointer",transition:"all .15s",
+        outline:tab===t?"1px solid rgba(29,155,240,.3)":"none",
+      });
+
+      return (
+        <div style={{minHeight:"100vh",background:"#000",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{width:"100%",maxWidth:480}}>
+            <div style={{textAlign:"center",marginBottom:30}}>
+              <div style={{color:"#e7e9ea",display:"inline-flex",marginBottom:12}}><XI/></div>
+              <h1 style={{fontSize:26,fontWeight:900,color:"#e7e9ea",letterSpacing:"-0.5px",marginBottom:6}}>X Video Scraper</h1>
+              <p style={{fontSize:13,color:"#71767b",lineHeight:1.5}}>Conecte sua conta do X para buscar e baixar vídeos</p>
+            </div>
+
+            <div style={{background:"#0d1117",border:"1px solid #1e2832",borderRadius:16,overflow:"hidden",boxShadow:"0 16px 48px rgba(0,0,0,.5)"}}>
+              <div style={{display:"flex",gap:4,padding:6,background:"#0a0f14",borderBottom:"1px solid #1e2832"}}>
+                <button style={tStyle("auto")}  onClick={()=>setTab("auto")}>🤖 Auto-detecção</button>
+                <button style={tStyle("ytdlp")} onClick={()=>setTab("ytdlp")}>⚙️ Via yt-dlp</button>
+                <button style={tStyle("paste")} onClick={()=>setTab("paste")}>📋 Colar cookies</button>
+              </div>
+
+              <div style={{padding:22}}>
+                {msg && (
+                  <div style={{background:msg.type==="ok"?"rgba(0,186,124,.1)":"rgba(244,33,46,.08)",border:"1px solid "+(msg.type==="ok"?"rgba(0,186,124,.35)":"rgba(244,33,46,.3)"),borderRadius:8,padding:"10px 14px",color:msg.type==="ok"?"#00ba7c":"#f4212e",fontSize:13,marginBottom:16,lineHeight:1.5,display:"flex",alignItems:"flex-start",gap:8}}>
+                    <span style={{flexShrink:0}}>{msg.type==="ok"?"✓":"✗"}</span><span>{msg.text}</span>
+                  </div>
+                )}
+
+                {tab==="auto" && (
+                  <div>
+                    <p style={{fontSize:13,color:"#71767b",marginBottom:18,lineHeight:1.6}}>
+                      Importa os cookies direto do navegador instalado. Você precisa estar <strong style={{color:"#e7e9ea"}}>logado no X</strong> nesse navegador.
+                    </p>
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                      {["Chrome","Firefox","Edge"].map(b=>(
+                        <button key={b} onClick={()=>doImport("/auth/auto-import",{browser:b.toLowerCase()})} disabled={loading}
+                          style={{padding:"12px 16px",borderRadius:10,border:"1px solid #1e2832",background:"#0a0f14",color:"#e7e9ea",fontSize:14,fontWeight:500,cursor:loading?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:10,opacity:loading?.6:1,transition:"all .15s",textAlign:"left"}}>
+                          {b==="Chrome"?"🟡":b==="Firefox"?"🟠":"🔵"} Importar do {b}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{marginTop:16,padding:"12px 14px",background:"rgba(255,212,0,.05)",border:"1px solid rgba(255,212,0,.15)",borderRadius:8,fontSize:12,color:"#71767b",lineHeight:1.6}}>
+                      ℹ️ Melhor resultado com <strong style={{color:"#ffd400"}}>Firefox</strong> no Linux (sem criptografia). Chrome pode precisar do método "yt-dlp".
+                    </div>
+                  </div>
+                )}
+
+                {tab==="ytdlp" && (
+                  <div>
+                    <p style={{fontSize:13,color:"#71767b",marginBottom:16,lineHeight:1.6}}>
+                      O <strong style={{color:"#e7e9ea"}}>yt-dlp</strong> extrai cookies diretamente do perfil. Escolha o navegador onde está logado no X:
+                    </p>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:18}}>
+                      {BROWSERS.map(b=>(
+                        <button key={b.id} onClick={()=>setBrowser(b.id)}
+                          style={{padding:"8px 14px",borderRadius:9999,border:"1px solid "+(browser===b.id?"#1d9bf0":"#1e2832"),background:browser===b.id?"rgba(29,155,240,.12)":"transparent",color:browser===b.id?"#1d9bf0":"#71767b",fontSize:13,fontWeight:browser===b.id?600:400,cursor:"pointer",transition:"all .15s",display:"flex",alignItems:"center",gap:6}}>
+                          {b.emoji} {b.label}
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={()=>doImport("/auth/yt-dlp-browser",{browser})} disabled={loading}
+                      style={{width:"100%",padding:"12px 0",borderRadius:9999,border:"none",background:loading?"#1e2832":"#1d9bf0",color:loading?"#71767b":"#fff",fontSize:14,fontWeight:700,cursor:loading?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+                      {loading?<><Spin size={16} color="#fff"/>Extraindo...</>:"Extrair cookies do "+BROWSERS.find(b=>b.id===browser)?.label}
+                    </button>
+                    <div style={{marginTop:14,padding:"10px 13px",background:"#0a0f14",borderRadius:8,border:"1px solid #1e2832",fontSize:12,color:"#71767b",lineHeight:1.6}}>
+                      💡 Feche o {BROWSERS.find(b=>b.id===browser)?.label} antes de extrair.
+                    </div>
+                  </div>
+                )}
+
+                {tab==="paste" && (
+                  <div>
+                    <p style={{fontSize:13,color:"#71767b",marginBottom:12,lineHeight:1.6}}>
+                      Use a extensão <a href={EXT} target="_blank" rel="noreferrer" style={{color:"#1d9bf0",textDecoration:"none"}}>Cookie-Editor</a> para exportar os cookies do x.com em JSON e cole aqui.
+                    </p>
+                    <div style={{marginBottom:14,display:"flex",flexDirection:"column",gap:8}}>
+                      {[
+                        {n:1,t:<span>Instale <a href={EXT} target="_blank" rel="noreferrer" style={{color:"#1d9bf0"}}>Cookie-Editor</a> no Chrome/Firefox</span>},
+                        {n:2,t:"Acesse x.com e certifique-se de estar logado"},
+                        {n:3,t:'Clique na extensão → "Export" → copie o JSON'},
+                        {n:4,t:"Cole abaixo e clique em Importar"},
+                      ].map(s=>(
+                        <div key={s.n} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                          <div style={{width:22,height:22,borderRadius:"50%",background:"rgba(29,155,240,.15)",border:"1px solid rgba(29,155,240,.3)",color:"#1d9bf0",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{s.n}</div>
+                          <span style={{fontSize:12,color:"#71767b",lineHeight:1.5,paddingTop:3}}>{s.t}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <textarea value={pasteText} onChange={e=>setPaste(e.target.value)} placeholder="Cole o JSON dos cookies aqui..." rows={6}
+                      style={{width:"100%",padding:"12px 14px",background:"#0a0f14",border:"1px solid #1e2832",borderRadius:10,color:"#e7e9ea",fontSize:12,fontFamily:"monospace",resize:"vertical",marginBottom:12,lineHeight:1.5,outline:"none"}}
+                      onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="#1e2832"}/>
+                    <button onClick={()=>doImport("/auth/paste-cookies",{cookies:pasteText})} disabled={loading||!pasteText.trim()}
+                      style={{width:"100%",padding:"12px 0",borderRadius:9999,border:"none",background:loading||!pasteText.trim()?"#1e2832":"#1d9bf0",color:loading||!pasteText.trim()?"#71767b":"#fff",fontSize:14,fontWeight:700,cursor:loading||!pasteText.trim()?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+                      {loading?<><Spin size={16} color="#fff"/>Importando...</>:"Importar Cookies"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+            <p style={{textAlign:"center",fontSize:11,color:"#2f3b47",marginTop:16}}>🔒 Cookies armazenados apenas localmente · Nunca enviados a servidores externos</p>
+          </div>
+        </div>
+      );
+    }
+
+    // ── App Login Screen (gates the whole app) ──────────────────────────────
+    function AppLoginScreen({ onSuccess }) {
+      const [username, setUsername] = useState("");
+      const [password, setPassword] = useState("");
+      const [loading, setLoading]   = useState(false);
+      const [err, setErr]           = useState("");
+
+      async function submit(e) {
+        e.preventDefault();
+        if (!username.trim() || !password || loading) return;
+        setLoading(true); setErr("");
+        try {
+          const r = await fetch(API+"/auth/app-login", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username,password})});
+          const d = await r.json();
+          if (d.success) onSuccess();
+          else setErr(d.error || "Usuário ou senha inválidos.");
+        } catch(e) { setErr("Erro de conexão."); }
+        setLoading(false);
+      }
+
+      const fieldStyle = {width:"100%",padding:"11px 14px",background:"#0a0f14",border:"1px solid #1e2832",borderRadius:10,color:"#e7e9ea",fontSize:14,marginBottom:16};
+
+      return (
+        <div style={{minHeight:"100vh",background:"#000",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <form onSubmit={submit} style={{width:"100%",maxWidth:360}}>
+            <div style={{textAlign:"center",marginBottom:30}}>
+              <div style={{color:"#e7e9ea",display:"inline-flex",marginBottom:12}}><XI/></div>
+              <h1 style={{fontSize:24,fontWeight:900,color:"#e7e9ea",letterSpacing:"-0.5px",marginBottom:6}}>X Video Scraper</h1>
+              <p style={{fontSize:13,color:"#71767b"}}>Faça login para acessar</p>
+            </div>
+            <div style={{background:"#0d1117",border:"1px solid #1e2832",borderRadius:16,padding:22,boxShadow:"0 16px 48px rgba(0,0,0,.5)"}}>
+              {err && (
+                <div style={{background:"rgba(244,33,46,.08)",border:"1px solid rgba(244,33,46,.3)",borderRadius:8,padding:"10px 14px",color:"#f4212e",fontSize:13,marginBottom:16,lineHeight:1.5}}>
+                  ✗ {err}
+                </div>
+              )}
+              <label style={{display:"block",fontSize:12,color:"#71767b",marginBottom:6}}>Usuário</label>
+              <input value={username} onChange={e=>setUsername(e.target.value)} autoFocus style={fieldStyle}
+                onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="#1e2832"}/>
+              <label style={{display:"block",fontSize:12,color:"#71767b",marginBottom:6}}>Senha</label>
+              <input type="password" value={password} onChange={e=>setPassword(e.target.value)} style={{...fieldStyle,marginBottom:20}}
+                onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="#1e2832"}/>
+              <button type="submit" disabled={loading||!username.trim()||!password}
+                style={{width:"100%",padding:"12px 0",borderRadius:9999,border:"none",background:loading||!username.trim()||!password?"#1e2832":"#1d9bf0",color:loading||!username.trim()||!password?"#71767b":"#fff",fontSize:14,fontWeight:700,cursor:loading||!username.trim()||!password?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+                {loading?<><Spin size={16} color="#fff"/>Entrando...</>:"Entrar"}
+              </button>
+            </div>
+          </form>
+        </div>
+      );
+    }
+
+    // ── Root (app-login gate, wraps the main App) ───────────────────────────
+    function Root() {
+      const [appAuth, setAppAuth] = useState(null);
+
+      useEffect(()=>{
+        fetch(API+"/auth/app-status").then(r=>r.json()).then(d=>setAppAuth(!!d.logged_in)).catch(()=>setAppAuth(false));
+      },[]);
+
+      async function appLogout() {
+        await fetch(API+"/auth/app-logout",{method:"POST"});
+        setAppAuth(false);
+      }
+
+      if (appAuth===null) return <div style={{minHeight:"100vh",background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}><Spin size={36}/></div>;
+      if (!appAuth) return <AppLoginScreen onSuccess={()=>setAppAuth(true)}/>;
+
+      return (
+        <>
+          <App/>
+          <button onClick={appLogout} title="Encerrar sessão do app"
+            style={{position:"fixed",bottom:14,left:14,zIndex:9999,background:"rgba(0,0,0,.6)",border:"1px solid #2f3b47",borderRadius:9999,color:"#71767b",fontSize:11,padding:"5px 10px",cursor:"pointer"}}>
+            🔒 Sair
+          </button>
+        </>
+      );
+    }
+
+    // ── Video Card ────────────────────────────────────────────────────────
+    // ── Play icon SVG ────────────────────────────────────────────────────
+    const PlayI = () => (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="white" style={{marginLeft:3}}>
+        <path d="M8 5v14l11-7z"/>
+      </svg>
+    );
+
+    function VideoCard({ video, onSelect, selected, isChecked, onToggleCheck }) {
+      const [pv, setPv]       = useState(null); // null | "loading" | {url, thumbnail?} | {error}
+      const [hov, setHov]     = useState(false);
+      const [thumbErr, setThumbErr] = useState(false);
+      const vidRef            = useRef(null);
+
+      async function handlePlay(e) {
+        e.stopPropagation();
+        if (pv === "loading") return;
+        if (pv?.url) {
+          if (vidRef.current) vidRef.current.paused ? vidRef.current.play() : vidRef.current.pause();
+          return;
+        }
+        setPv("loading");
+        try {
+          const r = await fetch(API+"/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:video.url})});
+          const d = await r.json();
+          if (d.error) setPv({error:d.error});
+          else setPv({url:d.url, thumbnail:d.thumbnail||null});
+        } catch {
+          setPv({error:"Erro de conexão"});
+        }
+      }
+
+      // Best thumbnail: from video card data, or fallback from preview response
+      const thumb = (!thumbErr && video.thumbnail) ? video.thumbnail
+                  : (pv?.thumbnail || null);
+
+      const isLoading = pv === "loading";
+      const hasVideo  = !!pv?.url;
+      const hasError  = !!pv?.error;
+
+      const borderColor = isChecked ? "#1d9bf0" : selected ? "#1d9bf0" : "#1e2832";
+      const bgColor     = isChecked ? "#0c1825" : selected ? "#0f1923" : "#0a0f14";
+
+      return (
+        <div className="vcard" style={{background:bgColor,border:"2px solid "+borderColor,
+          borderRadius:12,overflow:"hidden",cursor:"default",transition:"all .2s",
+          boxShadow:isChecked?"0 0 0 2px rgba(29,155,240,.35)":selected?"0 0 0 2px rgba(29,155,240,.25)":"none"}}>
+
+          {/* ── Thumbnail / video player ── */}
+          <div
+            onClick={handlePlay}
+            onMouseEnter={()=>setHov(true)}
+            onMouseLeave={()=>setHov(false)}
+            style={{position:"relative",paddingTop:"56.25%",background:"#0d1117",cursor:"pointer"}}
+          >
+            {/* ── Multi-select checkbox ── */}
+            <div
+              onClick={e=>{e.stopPropagation();onToggleCheck&&onToggleCheck(video.id);}}
+              style={{position:"absolute",top:8,left:8,zIndex:10,width:22,height:22,
+                borderRadius:5,cursor:"pointer",transition:"all .15s",
+                border:"2px solid "+(isChecked?"#1d9bf0":"rgba(255,255,255,.7)"),
+                background:isChecked?"#1d9bf0":"rgba(0,0,0,.55)",
+                display:"flex",alignItems:"center",justifyContent:"center",
+                boxShadow:"0 1px 6px rgba(0,0,0,.5)"}}>
+              {isChecked&&<svg width="12" height="12" viewBox="0 0 24 24" fill="white"><path d="M20 6L9 17l-5-5"/><polyline points="20 6 9 17 4 12" stroke="white" strokeWidth="3" fill="none" strokeLinecap="round"/></svg>}
+            </div>
+            {hasVideo ? (
+              <video
+                ref={vidRef}
+                src={pv.url}
+                autoPlay
+                controls
+                onClick={e=>e.stopPropagation()}
+                style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",background:"#000"}}
+              />
+            ) : (
+              <>
+                {thumb
+                  ? <img src={thumb} alt=""
+                      onError={()=>setThumbErr(true)}
+                      style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",
+                              filter:hov?"brightness(.65)":"brightness(.8)",transition:"filter .2s"}}/>
+                  : <div style={{position:"absolute",inset:0,background:"#111820"}}/>}
+
+                {/* Play button / spinner / error always centered */}
+                <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  {isLoading ? (
+                    <Spin size={44} color="#fff"/>
+                  ) : hasError ? (
+                    <div style={{color:"#f4212e",fontSize:11,textAlign:"center",padding:"0 16px",background:"rgba(0,0,0,.65)",borderRadius:8,padding:"6px 12px"}}>
+                      ✗ {pv.error}
+                    </div>
+                  ) : (
+                    <div style={{width:52,height:52,borderRadius:"50%",background:"rgba(0,0,0,.72)",
+                                  border:"2.5px solid rgba(255,255,255,.9)",display:"flex",alignItems:"center",
+                                  justifyContent:"center",transform:hov?"scale(1.1)":"scale(1)",
+                                  transition:"transform .15s",boxShadow:"0 2px 18px rgba(0,0,0,.55)"}}>
+                      <PlayI/>
+                    </div>
+                  )}
+                </div>
+
+                {/* Duration badge */}
+                {video.duration>0&&(
+                  <div style={{position:"absolute",bottom:6,right:6,background:"rgba(0,0,0,.82)",color:"#fff",fontSize:11,padding:"2px 7px",borderRadius:4,fontFamily:"monospace",letterSpacing:".3px"}}>
+                    {fmt(video.duration)}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* ── Card info row ── */}
+          <div style={{padding:"10px 12px",display:"flex",alignItems:"center",gap:9}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:500,color:"#e7e9ea",lineHeight:1.4,
+                           display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
+                {video.title||"X Video"}
+              </div>
+              <div style={{fontSize:11,color:"#71767b",marginTop:3,display:"flex",gap:6,flexWrap:"wrap"}}>
+                <span>@{video.uploader_id||video.uploader||"?"}</span>
+                {video.view_count>0&&<span>· {fmtV(video.view_count)} views</span>}
+              </div>
+            </div>
+
+            {/* Download button */}
+            <button
+              title="Selecionar formato e baixar"
+              onClick={e=>{e.stopPropagation();onSelect(video);}}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor="#1d9bf0";e.currentTarget.style.color="#1d9bf0";e.currentTarget.style.background="rgba(29,155,240,.1)";}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor="#2f3b47";e.currentTarget.style.color="#71767b";e.currentTarget.style.background="transparent";}}
+              style={{flexShrink:0,width:34,height:34,borderRadius:"50%",border:"1px solid #2f3b47",
+                      background:"transparent",color:"#71767b",cursor:"pointer",display:"flex",
+                      alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
+              <DlI/>
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Format Modal ──────────────────────────────────────────────────────
+    function FormatModal({ video, onClose }) {
+      const [fmts,setFmts]   = useState([]);
+      const [loadF,setLoadF] = useState(true);
+      const [sel,setSel]     = useState("best");
+      const [prog,setProg]   = useState(null);
+      const iv               = useRef(null);
+      const taskRef          = useRef(null);  // {taskId, title} when downloading
+      const progRef          = useRef(null);  // mirrors prog for use in close handler
+
+      useEffect(()=>{
+        (async()=>{
+          try{
+            const r=await fetch(API+"/formats",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:video.url})});
+            const d=await r.json();
+            setFmts(d.formats||[]);
+            if(d.formats?.length) setSel(d.formats[0].format_id);
+          }catch{}
+          setLoadF(false);
+        })();
+        return ()=>clearInterval(iv.current);
+      },[]);
+
+      function handleClose() {
+        clearInterval(iv.current);
+        const p = progRef.current;
+        const t = taskRef.current;
+        // If download is still running, hand it off to the bg tray
+        if (t && p && p.status!=="complete" && p.status!=="error") {
+          onClose(t);
+        } else {
+          onClose(null);
+        }
+      }
+
+      async function startDl(){
+        const r=await fetch(API+"/download/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:video.url,format_id:sel})});
+        const {task_id}=await r.json();
+        taskRef.current = {taskId: task_id, title: video.title||"Vídeo"};
+        const initial = {status:"downloading",percent:0};
+        setProg(initial); progRef.current=initial;
+        iv.current=setInterval(async()=>{
+          const p=await(await fetch(API+"/download/progress/"+task_id)).json();
+          setProg(p); progRef.current=p;
+          if(p.status==="complete"||p.status==="error"){
+            clearInterval(iv.current);
+            if(p.status==="complete") window.open(API+"/download/file/"+task_id,"_blank");
+          }
+        },700);
+      }
+
+      const allFmts=[{format_id:"best",label:"Melhor qualidade (auto)",sub:"Seleção automática",size:"—"},
+        ...fmts.map(f=>({format_id:f.format_id,
+          label:(f.height?f.height+"p":"?")+(f.fps&&f.fps!==30?" "+f.fps+"fps":"")+" · "+(f.ext||"mp4").toUpperCase(),
+          sub:(f.vcodec||"")+(f.width&&f.height?" · "+f.width+"×"+f.height:"")+(f.tbr?" · "+Math.round(f.tbr)+"kbps":""),
+          size:f.filesize_mb>0?f.filesize_mb+" MB":"—"}))];
+
+      return (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,backdropFilter:"blur(4px)"}} onClick={e=>e.target===e.currentTarget&&handleClose()}>
+          <div style={{background:"#0d1117",border:"1px solid #1e2832",borderRadius:16,width:"calc(100% - 32px)",maxWidth:500,overflow:"hidden",boxShadow:"0 24px 64px rgba(0,0,0,.6)"}}>
+            <div style={{padding:"17px 22px",borderBottom:"1px solid #1e2832",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span style={{color:"#e7e9ea",fontWeight:600,fontSize:15,display:"flex",alignItems:"center",gap:8}}><span style={{color:"#1d9bf0"}}><DlI/></span>Selecionar Formato</span>
+              <button onClick={handleClose} style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",display:"flex"}}><CloseI/></button>
+            </div>
+            <div style={{padding:"13px 22px",borderBottom:"1px solid #1e2832"}}>
+              <div style={{fontSize:13,color:"#e7e9ea",fontWeight:500,marginBottom:2}}>{video.title||"X Video"}</div>
+              <div style={{fontSize:12,color:"#71767b"}}>@{video.uploader_id||video.uploader}</div>
+            </div>
+            <div style={{padding:"14px 22px",maxHeight:260,overflowY:"auto"}}>
+              {loadF?<div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"24px 0",color:"#71767b",fontSize:13}}><Spin/>Carregando formatos...</div>:(
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {allFmts.map(f=>(
+                    <div key={f.format_id} onClick={()=>setSel(f.format_id)} style={{padding:"10px 13px",borderRadius:10,border:"1px solid "+(sel===f.format_id?"#1d9bf0":"#1e2832"),background:sel===f.format_id?"rgba(29,155,240,.08)":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between",transition:"all .15s"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        <div style={{width:17,height:17,borderRadius:"50%",border:"2px solid "+(sel===f.format_id?"#1d9bf0":"#2f3b47"),display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          {sel===f.format_id&&<div style={{width:7,height:7,borderRadius:"50%",background:"#1d9bf0"}}/>}
+                        </div>
+                        <div>
+                          <div style={{fontSize:13,color:"#e7e9ea",fontWeight:500}}>{f.label}</div>
+                          {f.sub&&<div style={{fontSize:11,color:"#71767b",marginTop:2}}>{f.sub}</div>}
+                        </div>
+                      </div>
+                      <span style={{fontSize:12,color:"#71767b",flexShrink:0,marginLeft:12}}>{f.size}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {prog&&(
+              <div style={{padding:"0 22px 14px"}}>
+                <div style={{background:"#0a0f14",borderRadius:8,padding:"12px 14px",border:"1px solid #1e2832"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:8}}>
+                    <span style={{color:prog.status==="error"?"#f4212e":prog.status==="complete"?"#00ba7c":"#1d9bf0"}}>
+                      {prog.status==="complete"?"✓ Concluído!":prog.status==="error"?"✗ "+prog.error:prog.status==="finished"?"Processando...":"Baixando… "+(prog.speed||"")}
+                    </span>
+                    <span style={{color:"#71767b"}}>{Math.round(prog.percent||0)}%</span>
+                  </div>
+                  <div style={{background:"#1e2832",borderRadius:4,height:4,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:(prog.percent||0)+"%",background:prog.status==="error"?"#f4212e":prog.status==="complete"?"#00ba7c":"#1d9bf0",borderRadius:4,transition:"width .3s ease"}}/>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div style={{padding:"13px 22px 18px",borderTop:"1px solid #1e2832",display:"flex",gap:10}}>
+              <button onClick={handleClose} style={{flex:1,padding:"10px 0",borderRadius:9999,border:"1px solid #2f3b47",background:"transparent",color:"#e7e9ea",fontSize:14,fontWeight:600,cursor:"pointer"}}>
+                {prog?.status==="downloading"?"Fechar (bg)":"Cancelar"}
+              </button>
+              <button onClick={startDl} disabled={prog?.status==="downloading"} style={{flex:2,padding:"10px 0",borderRadius:9999,border:"none",background:prog?.status==="complete"?"#00ba7c":"#1d9bf0",color:"#fff",fontSize:14,fontWeight:700,cursor:prog?.status==="downloading"?"not-allowed":"pointer",opacity:prog?.status==="downloading"?.6:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,transition:"all .2s"}}>
+                {prog?.status==="downloading"?<><Spin size={15} color="#fff"/>Baixando...</>:<><DlI/>{prog?.status==="complete"?"Baixado!":"Baixar Vídeo"}</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Multi-select bulk download ────────────────────────────────────────
+    const BULK_FMTS = [
+      {id:"best",                    label:"Melhor qualidade (auto)"},
+      {id:"best[height<=1080]/best", label:"Até 1080p"},
+      {id:"best[height<=720]/best",  label:"Até 720p"},
+      {id:"best[height<=480]/best",  label:"Até 480p"},
+    ];
+
+    function BulkActionBar({ count, total, fmt, onFmtChange, onDownload, onSelectAll, onClear }) {
+      return (
+        <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:300,
+          background:"rgba(10,15,20,.97)",backdropFilter:"blur(14px)",
+          borderTop:"1px solid #1e2832",boxShadow:"0 -4px 28px rgba(0,0,0,.5)",
+          animation:"fadeIn .18s ease"}}>
+          <div style={{maxWidth:960,margin:"0 auto",padding:"12px 20px",
+            display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,flex:1,minWidth:200}}>
+              <span style={{color:"#1d9bf0",fontWeight:700,fontSize:14}}>
+                {count} selecionado{count!==1?"s":""}
+              </span>
+              {count<total&&(
+                <button onClick={onSelectAll}
+                  style={{background:"none",border:"none",color:"#71767b",fontSize:12,cursor:"pointer",padding:0,textDecoration:"underline"}}>
+                  Selecionar todos ({total})
+                </button>
+              )}
+              <button onClick={onClear}
+                style={{background:"none",border:"none",color:"#71767b",fontSize:12,cursor:"pointer",padding:0,textDecoration:"underline"}}>
+                Limpar
+              </button>
+            </div>
+            <select value={fmt} onChange={e=>onFmtChange(e.target.value)}
+              style={{background:"#0a0f14",border:"1px solid #2f3b47",borderRadius:8,
+                color:"#e7e9ea",fontSize:13,padding:"8px 10px",cursor:"pointer"}}>
+              {BULK_FMTS.map(f=><option key={f.id} value={f.id}>{f.label}</option>)}
+            </select>
+            <button onClick={onDownload}
+              style={{padding:"10px 22px",borderRadius:9999,border:"none",
+                background:"#1d9bf0",color:"#fff",fontSize:14,fontWeight:700,
+                cursor:"pointer",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+              <DlI/> Baixar {count} vídeo{count!==1?"s":""}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function BulkProgressModal({ tasks, onClose }) {
+      const [items, setItems]   = useState(() => tasks.map(t=>({...t,taskId:null,prog:{status:"queued",percent:0}})));
+      const stRef               = useRef(null);
+      const ivRef               = useRef(null);
+
+      useEffect(()=>{
+        stRef.current = tasks.map(t=>({...t,taskId:null,prog:{status:"queued",percent:0}}));
+
+        // Start all downloads in parallel
+        Promise.all(tasks.map(async (t,i)=>{
+          try{
+            const r=await fetch(API+"/download/start",{method:"POST",
+              headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({url:t.url,format_id:t.fmt||"best"})});
+            const {task_id}=await r.json();
+            return {taskId:task_id,prog:{status:"downloading",percent:0}};
+          }catch{
+            return {taskId:null,prog:{status:"error",error:"Falha ao iniciar"}};
+          }
+        })).then(results=>{
+          const upd=stRef.current.map((item,i)=>({...item,...results[i]}));
+          stRef.current=upd;
+          setItems([...upd]);
+
+          // Poll all active tasks
+          ivRef.current=setInterval(async()=>{
+            const cur=stRef.current;
+            const next=await Promise.all(cur.map(async item=>{
+              if(!item.taskId||item.prog.status==="complete"||item.prog.status==="error") return item;
+              try{
+                const p=await(await fetch(API+"/download/progress/"+item.taskId)).json();
+                return {...item,prog:p};
+              }catch{ return item; }
+            }));
+            stRef.current=next;
+            setItems([...next]);
+            if(next.every(x=>x.prog.status==="complete"||x.prog.status==="error"))
+              clearInterval(ivRef.current);
+          },900);
+        });
+
+        return ()=>clearInterval(ivRef.current);
+      },[]);
+
+      const doneCount=items.filter(x=>x.prog.status==="complete").length;
+      const allDone=items.every(x=>x.prog.status==="complete"||x.prog.status==="error");
+
+      return (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.78)",display:"flex",
+          alignItems:"center",justifyContent:"center",zIndex:1000,backdropFilter:"blur(4px)"}}>
+          <div style={{background:"#0d1117",border:"1px solid #1e2832",borderRadius:16,
+            width:"calc(100% - 32px)",maxWidth:540,maxHeight:"82vh",
+            display:"flex",flexDirection:"column",boxShadow:"0 24px 64px rgba(0,0,0,.6)"}}>
+
+            {/* Header */}
+            <div style={{padding:"16px 22px",borderBottom:"1px solid #1e2832",
+              display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <div>
+                <span style={{color:"#e7e9ea",fontWeight:700,fontSize:15}}>
+                  Baixando {items.length} vídeo{items.length!==1?"s":""}
+                </span>
+                {allDone&&<span style={{color:"#00ba7c",fontSize:13,marginLeft:10}}>✓ Todos concluídos</span>}
+              </div>
+              <button onClick={()=>{
+                  clearInterval(ivRef.current);
+                  const running=stRef.current.filter(x=>x.taskId&&x.prog.status!=="complete"&&x.prog.status!=="error").map(x=>({taskId:x.taskId,title:x.title}));
+                  onClose(running.length?running:null);
+                }} style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",display:"flex"}}><CloseI/></button>
+            </div>
+
+            {/* Video list */}
+            <div style={{flex:1,overflowY:"auto",padding:"14px 22px",display:"flex",flexDirection:"column",gap:10}}>
+              {items.map((item,i)=>{
+                const st=item.prog.status;
+                const barColor=st==="error"?"#f4212e":st==="complete"?"#00ba7c":"#1d9bf0";
+                return (
+                  <div key={i} style={{background:"#0a0f14",borderRadius:10,padding:"11px 14px",border:"1px solid #1e2832"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:7}}>
+                      <div style={{flex:1,fontSize:13,color:"#e7e9ea",fontWeight:500,
+                        overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {item.title||"X Video"}
+                      </div>
+                      {st==="complete"&&item.taskId&&(
+                        <button onClick={()=>window.open(API+"/download/file/"+item.taskId,"_blank")}
+                          style={{flexShrink:0,padding:"3px 11px",borderRadius:9999,border:"none",
+                            background:"#00ba7c",color:"#fff",fontSize:11,fontWeight:600,cursor:"pointer"}}>
+                          Salvar
+                        </button>
+                      )}
+                    </div>
+                    <div style={{background:"#1e2832",borderRadius:3,height:3,overflow:"hidden",marginBottom:6}}>
+                      <div style={{height:"100%",borderRadius:3,transition:"width .3s ease",
+                        width:(item.prog.percent||0)+"%",background:barColor}}/>
+                    </div>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11}}>
+                      <span style={{color:st==="error"?"#f4212e":st==="complete"?"#00ba7c":"#71767b"}}>
+                        {st==="complete"?"✓ Concluído":
+                         st==="error"?"✗ "+(item.prog.error||"Erro"):
+                         st==="queued"?"Aguardando...":
+                         "Baixando… "+(item.prog.speed||"")}
+                      </span>
+                      <span style={{color:"#71767b"}}>{Math.round(item.prog.percent||0)}%</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer */}
+            <div style={{padding:"12px 22px",borderTop:"1px solid #1e2832",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+              <span style={{fontSize:12,color:"#71767b"}}>
+                {allDone?`${doneCount} de ${items.length} baixado${doneCount!==1?"s":""}`
+                  :`${doneCount} de ${items.length} concluído${doneCount!==1?"s":""}`}
+              </span>
+              <button onClick={()=>{
+                  clearInterval(ivRef.current);
+                  const running=stRef.current.filter(x=>x.taskId&&x.prog.status!=="complete"&&x.prog.status!=="error").map(x=>({taskId:x.taskId,title:x.title}));
+                  onClose(running.length?running:null);
+                }}
+                style={{padding:"9px 24px",borderRadius:9999,border:"1px solid #2f3b47",
+                  background:"transparent",color:"#e7e9ea",fontSize:14,fontWeight:600,cursor:"pointer"}}>
+                {allDone?"Fechar":"Minimizar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Main App ──────────────────────────────────────────────────────────
+    // ── Background download tray ──────────────────────────────────────────────
+    function BgTray({ tasks, onClear }) {
+      const [open, setOpen] = useState(false);
+      const active  = tasks.filter(t=>t.prog.status==="downloading"||t.prog.status==="queued"||t.prog.status==="finished");
+      const done    = tasks.filter(t=>t.prog.status==="complete");
+      const errors  = tasks.filter(t=>t.prog.status==="error");
+      const allDone = tasks.length>0 && active.length===0;
+      const pct     = tasks.length ? Math.round(tasks.reduce((s,t)=>s+(t.prog.percent||0),0)/tasks.length) : 0;
+
+      if (!tasks.length) return null;
+
+      const pillBg  = allDone ? "#00ba7c" : "#1d9bf0";
+      const pillTxt = allDone
+        ? `✓ ${done.length} concluído${done.length!==1?"s":""}`
+        : `${active.length} baixando • ${pct}%`;
+
+      return (
+        <div style={{position:"fixed",bottom:20,right:20,zIndex:500,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:8}}>
+          {/* expanded panel */}
+          {open&&(
+            <div style={{width:"min(340px, calc(100vw - 40px))",background:"#0d1117",border:"1px solid #1e2832",borderRadius:14,
+              boxShadow:"0 12px 48px rgba(0,0,0,.7)",overflow:"hidden",animation:"fadeIn .15s ease"}}>
+              <div style={{padding:"12px 16px",borderBottom:"1px solid #1e2832",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <span style={{fontWeight:700,fontSize:13,color:"#e7e9ea"}}>Downloads em background</span>
+                <button onClick={()=>setOpen(false)} style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",display:"flex"}}><CloseI/></button>
+              </div>
+              <div style={{maxHeight:320,overflowY:"auto",padding:"10px 14px",display:"flex",flexDirection:"column",gap:8}}>
+                {tasks.map((item,i)=>{
+                  const st=item.prog.status;
+                  const clr=st==="error"?"#f4212e":st==="complete"?"#00ba7c":"#1d9bf0";
+                  return (
+                    <div key={i} style={{background:"#0a0f14",borderRadius:9,padding:"9px 12px",border:"1px solid #1e2832"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+                        <div style={{flex:1,fontSize:12,color:"#e7e9ea",fontWeight:500,
+                          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                          {item.title||"Vídeo"}
+                        </div>
+                        {st==="complete"&&item.taskId&&(
+                          <button onClick={()=>window.open(API+"/download/file/"+item.taskId,"_blank")}
+                            style={{flexShrink:0,padding:"2px 9px",borderRadius:9999,border:"none",
+                              background:"#00ba7c",color:"#fff",fontSize:11,fontWeight:600,cursor:"pointer"}}>
+                            Abrir
+                          </button>
+                        )}
+                      </div>
+                      <div style={{background:"#1e2832",borderRadius:3,height:3,overflow:"hidden",marginBottom:4}}>
+                        <div style={{height:"100%",borderRadius:3,width:(item.prog.percent||0)+"%",background:clr,transition:"width .3s ease"}}/>
+                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:11}}>
+                        <span style={{color:clr}}>
+                          {st==="complete"?"✓ Concluído":st==="error"?"✗ "+(item.prog.error||"Erro"):
+                           st==="queued"?"Aguardando…":"Baixando… "+(item.prog.speed||"")}
+                        </span>
+                        <span style={{color:"#71767b"}}>{Math.round(item.prog.percent||0)}%</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {(done.length>0||errors.length>0)&&(
+                <div style={{padding:"10px 14px",borderTop:"1px solid #1e2832",display:"flex",justifyContent:"flex-end"}}>
+                  <button onClick={onClear}
+                    style={{background:"none",border:"1px solid #2f3b47",borderRadius:8,
+                      color:"#71767b",fontSize:11,padding:"4px 12px",cursor:"pointer"}}>
+                    Limpar concluídos
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* pill toggle button */}
+          <button onClick={()=>setOpen(o=>!o)}
+            style={{display:"flex",alignItems:"center",gap:8,padding:"9px 16px",
+              borderRadius:9999,border:"none",background:pillBg,color:"#fff",
+              fontSize:13,fontWeight:700,cursor:"pointer",
+              boxShadow:"0 4px 20px rgba(0,0,0,.5)",transition:"background .2s"}}>
+            {active.length>0?<Spin size={14} color="#fff"/>:<DlI/>}
+            {pillTxt}
+          </button>
+        </div>
+      );
+    }
+
+    // ── Library: downloaded videos grid ─────────────────────────────────────
+    function LibraryGrid({ items, loading, err, onOpen }) {
+      if (loading) {
+        return (
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"60px 0",color:"#71767b"}}>
+            <Spin size={28}/>Carregando vídeos…
+          </div>
+        );
+      }
+      if (!items.length) {
+        return (
+          <div style={{textAlign:"center",paddingTop:48,color:"#71767b"}}>
+            <div style={{fontSize:44,marginBottom:14,opacity:.35}}>📁</div>
+            <div style={{fontSize:15,fontWeight:500,color:"#2f3b47",marginBottom:6}}>Nenhum vídeo baixado</div>
+            <div style={{fontSize:13}}>{err||"Os vídeos baixados aparecerão aqui."}</div>
+          </div>
+        );
+      }
+      return (
+        <div style={{animation:"fadeIn .4s ease"}}>
+          <div style={{marginBottom:16,fontSize:14,color:"#e7e9ea",fontWeight:600}}>
+            {items.length} vídeo{items.length!==1?"s":""} baixado{items.length!==1?"s":""}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:13}}>
+            {items.map((it,i)=>(
+              <div key={it.name} onClick={()=>onOpen(i)}
+                style={{background:"#0a0f14",border:"2px solid #1e2832",borderRadius:12,
+                  overflow:"hidden",cursor:"pointer",transition:"border-color .15s"}}
+                onMouseEnter={e=>e.currentTarget.style.borderColor="#1d9bf0"}
+                onMouseLeave={e=>e.currentTarget.style.borderColor="#1e2832"}>
+                <div style={{position:"relative",paddingTop:"56.25%",background:"#0d1117",
+                  display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    <div style={{width:52,height:52,borderRadius:"50%",background:"rgba(0,0,0,.72)",
+                      border:"2.5px solid rgba(255,255,255,.9)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      <PlayI/>
+                    </div>
+                  </div>
+                </div>
+                <div style={{padding:"10px 12px"}}>
+                  <div style={{fontSize:13,fontWeight:500,color:"#e7e9ea",lineHeight:1.4,
+                    display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",wordBreak:"break-all"}}>
+                    {it.name}
+                  </div>
+                  <div style={{fontSize:11,color:"#71767b",marginTop:3}}>{it.size_mb} MB</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ── Library: full-screen player with seek/play/pause/delete/next/prev ──
+    function PlayerModal({ items, index, onClose, onPrev, onNext, onDelete }) {
+      const video        = items[index];
+      const vidRef       = useRef(null);
+      const [playing,setPlaying] = useState(true);
+      const [curTime,setCurTime] = useState(0);
+      const [dur,    setDur]     = useState(0);
+      const [flash,  setFlash]   = useState(null); // null | "back" | "fwd"
+      const flashTimer = useRef(null);
+      const clickTimer = useRef(null);
+
+      useEffect(()=>{
+        setCurTime(0); setDur(0); setPlaying(true);
+      },[index]);
+      useEffect(()=>()=>{ clearTimeout(flashTimer.current); clearTimeout(clickTimer.current); },[]);
+
+      function togglePlay(){
+        const v = vidRef.current;
+        if(!v) return;
+        if(v.paused) v.play(); else v.pause();
+      }
+
+      function seek(delta){
+        const v = vidRef.current;
+        if(!v) return;
+        const d = v.duration || dur || Infinity;
+        v.currentTime = Math.max(0, Math.min(d, v.currentTime + delta));
+        setFlash(delta<0?"back":"fwd");
+        clearTimeout(flashTimer.current);
+        flashTimer.current = setTimeout(()=>setFlash(null), 450);
+      }
+
+      // Single click toggles play/pause; double click seeks ±10s on the side clicked.
+      // The single-click action is delayed so a follow-up dblclick can cancel it.
+      function handleClick(){
+        if(clickTimer.current) return;
+        clickTimer.current = setTimeout(()=>{ togglePlay(); clickTimer.current=null; }, 280);
+      }
+      function handleDblClick(e){
+        if(clickTimer.current){ clearTimeout(clickTimer.current); clickTimer.current=null; }
+        const rect = e.currentTarget.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        seek(x < rect.width/2 ? -10 : 10);
+      }
+
+      function seekToPct(e){
+        const rect = e.currentTarget.getBoundingClientRect();
+        const pct  = Math.max(0, Math.min(1, (e.clientX-rect.left)/rect.width));
+        if(vidRef.current && dur) vidRef.current.currentTime = pct*dur;
+      }
+
+      function handleEnded(){
+        if(index < items.length-1) onNext();
+      }
+
+      const navBtn = (disabled,extra) => ({
+        display:"flex",alignItems:"center",justifyContent:"center",gap:6,
+        minWidth:46,height:42,padding:"0 16px",borderRadius:9999,
+        border:"1px solid #2f3b47",background:"#0d1117",
+        color:disabled?"#2f3b47":"#e7e9ea",fontSize:13,fontWeight:700,
+        cursor:disabled?"not-allowed":"pointer",opacity:disabled?.4:1,
+        transition:"all .15s",...extra
+      });
+
+      return (
+        <div style={{position:"fixed",inset:0,background:"#000",zIndex:1100,display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 18px",borderBottom:"1px solid #1e2832"}}>
+            <span style={{color:"#e7e9ea",fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginRight:12,wordBreak:"break-all"}}>
+              {video.name}
+            </span>
+            <button onClick={onClose} style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",display:"flex",flexShrink:0}}><CloseI/></button>
+          </div>
+
+          <div onClick={handleClick} onDoubleClick={handleDblClick}
+            style={{flex:1,position:"relative",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",userSelect:"none",cursor:"pointer"}}>
+            <video key={video.name} ref={vidRef}
+              src={API+"/library/video/"+encodeURIComponent(video.name)}
+              autoPlay
+              onPlay={()=>setPlaying(true)} onPause={()=>setPlaying(false)}
+              onTimeUpdate={e=>setCurTime(e.target.currentTime)}
+              onLoadedMetadata={e=>setDur(e.target.duration)}
+              onEnded={handleEnded}
+              style={{maxWidth:"100%",maxHeight:"100%",pointerEvents:"none"}}/>
+
+            {flash==="back"&&(
+              <div style={{position:"absolute",left:0,top:0,bottom:0,width:"50%",display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+                <span style={{color:"#fff",fontSize:15,fontWeight:700,background:"rgba(0,0,0,.6)",borderRadius:"50%",width:60,height:60,display:"flex",alignItems:"center",justifyContent:"center"}}>−10s</span>
+              </div>
+            )}
+            {flash==="fwd"&&(
+              <div style={{position:"absolute",right:0,top:0,bottom:0,width:"50%",display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+                <span style={{color:"#fff",fontSize:15,fontWeight:700,background:"rgba(0,0,0,.6)",borderRadius:"50%",width:60,height:60,display:"flex",alignItems:"center",justifyContent:"center"}}>+10s</span>
+              </div>
+            )}
+
+            {!playing&&(
+              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+                <div style={{width:64,height:64,borderRadius:"50%",background:"rgba(0,0,0,.55)",border:"2.5px solid rgba(255,255,255,.85)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <PlayI/>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* progress bar */}
+          <div style={{padding:"10px 18px 0",display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:11,color:"#71767b",fontFamily:"monospace",minWidth:38}}>{fmt(curTime)}</span>
+            <div onClick={seekToPct} style={{flex:1,height:4,background:"#1e2832",borderRadius:2,cursor:"pointer",position:"relative"}}>
+              <div style={{height:"100%",width:(dur?curTime/dur*100:0)+"%",background:"#1d9bf0",borderRadius:2}}/>
+            </div>
+            <span style={{fontSize:11,color:"#71767b",fontFamily:"monospace",minWidth:38,textAlign:"right"}}>{fmt(dur)}</span>
+          </div>
+
+          {/* controls */}
+          <div className="player-controls" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"14px 18px 18px",flexWrap:"wrap"}}>
+            <button onClick={onPrev} disabled={index<=0} title="Vídeo anterior" style={navBtn(index<=0)}><SkipBackI/></button>
+            <button onClick={()=>seek(-10)} title="Voltar 10s" style={navBtn(false)}>−10s</button>
+            <button onClick={togglePlay} title={playing?"Pausar":"Reproduzir"} style={navBtn(false,{background:"#1d9bf0",border:"none",minWidth:50})}>
+              {playing?<PauseI/>:<PlayI/>}
+            </button>
+            <button onClick={()=>seek(10)} title="Avançar 10s" style={navBtn(false)}>+10s</button>
+            <button onClick={onNext} disabled={index>=items.length-1} title="Próximo vídeo" style={navBtn(index>=items.length-1)}><SkipForwardI/></button>
+            <button onClick={onDelete} title="Excluir vídeo" style={navBtn(false,{background:"rgba(244,33,46,.1)",border:"1px solid rgba(244,33,46,.4)",color:"#f4212e"})}>
+              <TrashI/> Excluir
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── PostModal — compor e publicar tweet com vídeo ─────────────────────────
+    function PostModal({ onClose }) {
+      const [text, setText]       = useState("");
+      const [file, setFile]       = useState(null);
+      const [thumbUrl, setThumbUrl] = useState(null);
+      const [mediaId, setMediaId] = useState(null);
+      const [phase, setPhase]     = useState("idle"); // idle | uploading | posting | done
+      const [progress, setProgress] = useState(0);
+      const [errMsg, setErrMsg]   = useState("");
+      const [tweetUrl, setTweetUrl] = useState("");
+      const fileRef = useRef(null);
+      const CHUNK   = 5 * 1024 * 1024; // 5 MB por segmento
+      const charLeft = 280 - text.length;
+      const canPost  = (text.trim() || mediaId) && phase === "idle" && charLeft >= 0;
+
+      useEffect(() => {
+        if (!file) { setThumbUrl(null); return; }
+        const url = URL.createObjectURL(file);
+        setThumbUrl(url);
+        return () => URL.revokeObjectURL(url);
+      }, [file]);
+
+      async function handleFile(f) {
+        if (!f) return;
+        setFile(f); setMediaId(null); setErrMsg(""); setPhase("uploading"); setProgress(0);
+        try {
+          // INIT
+          const init = await fetch(API+"/upload/init", {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({total_bytes: f.size, media_type: f.type||"video/mp4"}),
+          }).then(r=>r.json());
+          if (init.error) { setErrMsg(init.error); setPhase("idle"); return; }
+          const mid = init.media_id;
+          // APPEND em chunks
+          const n = Math.ceil(f.size / CHUNK);
+          for (let i = 0; i < n; i++) {
+            const form = new FormData();
+            form.append("media_id", mid);
+            form.append("segment_index", i);
+            form.append("chunk", f.slice(i*CHUNK, (i+1)*CHUNK));
+            const cr = await fetch(API+"/upload/chunk", {method:"POST", body:form}).then(r=>r.json());
+            if (cr.error) { setErrMsg(cr.error); setPhase("idle"); return; }
+            setProgress(Math.round(((i+1)/n)*85));
+          }
+          // FINALIZE + poll
+          setProgress(90);
+          const fin = await fetch(API+"/upload/finalize", {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({media_id: mid}),
+          }).then(r=>r.json());
+          if (fin.error) { setErrMsg(fin.error); setPhase("idle"); return; }
+          setMediaId(mid); setProgress(100); setPhase("idle");
+        } catch(e) { setErrMsg("Erro de conexão: "+e.message); setPhase("idle"); }
+      }
+
+      async function handlePost() {
+        if (!canPost) return;
+        setPhase("posting"); setErrMsg("");
+        try {
+          const r = await fetch(API+"/tweet/create", {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({text: text.trim(), media_id: mediaId||""}),
+          }).then(r=>r.json());
+          if (r.success) { setTweetUrl(r.url||""); setPhase("done"); }
+          else { setErrMsg(r.error||"Erro desconhecido"); setPhase("idle"); }
+        } catch(e) { setErrMsg("Erro de conexão: "+e.message); setPhase("idle"); }
+      }
+
+      const OVL = {position:"fixed",inset:0,background:"rgba(0,0,0,.78)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,backdropFilter:"blur(4px)"};
+      const BOX = {background:"#0d1117",border:"1px solid #1e2832",borderRadius:16,width:"calc(100% - 32px)",maxWidth:540,overflow:"hidden",boxShadow:"0 24px 64px rgba(0,0,0,.6)"};
+
+      if (phase === "done") return (
+        <div style={OVL} onClick={e=>e.target===e.currentTarget&&onClose()}>
+          <div style={{...BOX, maxWidth:380}}>
+            <div style={{padding:"40px 28px",textAlign:"center"}}>
+              <div style={{width:56,height:56,borderRadius:"50%",background:"rgba(0,186,124,.15)",border:"2px solid #00ba7c",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",fontSize:24}}>✓</div>
+              <div style={{color:"#00ba7c",fontSize:17,fontWeight:700,marginBottom:6}}>Tweet publicado!</div>
+              <div style={{color:"#71767b",fontSize:13,marginBottom:24}}>Seu vídeo foi enviado para o X com sucesso.</div>
+              <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
+                {tweetUrl&&<a href={tweetUrl} target="_blank" rel="noreferrer" style={{padding:"10px 22px",borderRadius:9999,background:"#1d9bf0",color:"#fff",fontSize:14,fontWeight:700,textDecoration:"none"}}>Ver no X</a>}
+                <button onClick={onClose} style={{padding:"10px 22px",borderRadius:9999,border:"1px solid #2f3b47",background:"transparent",color:"#e7e9ea",fontSize:14,fontWeight:600,cursor:"pointer"}}>Fechar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+
+      return (
+        <div style={OVL} onClick={e=>e.target===e.currentTarget&&onClose()}>
+          <div style={BOX}>
+            {/* Cabeçalho */}
+            <div style={{padding:"14px 20px",borderBottom:"1px solid #1e2832",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <span style={{color:"#1d9bf0"}}><XI/></span>
+                <span style={{color:"#e7e9ea",fontWeight:700,fontSize:15}}>Novo Tweet</span>
+              </div>
+              <button onClick={onClose} style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",display:"flex"}}><CloseI/></button>
+            </div>
+            {/* Corpo */}
+            <div style={{padding:"16px 20px"}}>
+              {errMsg&&(
+                <div style={{background:"rgba(244,33,46,.08)",border:"1px solid rgba(244,33,46,.3)",borderRadius:8,padding:"10px 14px",color:"#f4212e",fontSize:13,marginBottom:14,display:"flex",gap:8,lineHeight:1.5}}>
+                  <span style={{flexShrink:0}}>✗</span><span>{errMsg}</span>
+                </div>
+              )}
+              <textarea value={text} onChange={e=>setText(e.target.value)}
+                placeholder="O que está acontecendo?" rows={4} maxLength={320}
+                disabled={phase==="posting"}
+                style={{width:"100%",padding:"12px 14px",background:"#0a0f14",border:"1px solid #1e2832",borderRadius:10,color:"#e7e9ea",fontSize:15,fontFamily:"system-ui,sans-serif",resize:"vertical",marginBottom:14,lineHeight:1.6,transition:"border-color .15s"}}
+                onFocus={e=>e.target.style.borderColor="#1d9bf0"}
+                onBlur={e=>e.target.style.borderColor="#1e2832"}
+              />
+              {/* Preview do vídeo */}
+              {thumbUrl&&(
+                <div style={{position:"relative",borderRadius:10,overflow:"hidden",marginBottom:14,border:"1px solid #1e2832",background:"#000"}}>
+                  <video src={thumbUrl} style={{width:"100%",maxHeight:180,objectFit:"cover",display:"block"}} muted/>
+                  {phase==="uploading"&&(
+                    <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.65)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10}}>
+                      <Spin size={30}/><span style={{color:"#fff",fontSize:13,fontWeight:500}}>Enviando… {progress}%</span>
+                    </div>
+                  )}
+                  {mediaId&&phase==="idle"&&<div style={{position:"absolute",top:8,right:8,background:"rgba(0,186,124,.92)",color:"#fff",fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:9999}}>✓ Pronto</div>}
+                  {!mediaId&&phase==="idle"&&file&&(
+                    <button onClick={()=>{setFile(null);setMediaId(null);}}
+                      style={{position:"absolute",top:6,right:6,width:26,height:26,borderRadius:"50%",background:"rgba(0,0,0,.7)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>✕</button>
+                  )}
+                </div>
+              )}
+              {/* Barra de progresso */}
+              {phase==="uploading"&&(
+                <div style={{marginBottom:14}}>
+                  <div style={{background:"#1e2832",borderRadius:4,height:4,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:progress+"%",background:"#1d9bf0",borderRadius:4,transition:"width .25s ease"}}/>
+                  </div>
+                  <div style={{fontSize:11,color:"#71767b",marginTop:5}}>Enviando vídeo… {progress}% {file&&"· "+Math.round(file.size/1048576)+" MB total"}</div>
+                </div>
+              )}
+              {/* Rodapé — anexar + contador + publicar */}
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,paddingTop:4,borderTop:"1px solid #1e2832",marginTop:4}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <input ref={fileRef} type="file" accept="video/*" style={{display:"none"}} onChange={e=>handleFile(e.target.files[0])}/>
+                  <button onClick={()=>fileRef.current.click()} disabled={phase!=="idle"} title="Anexar vídeo"
+                    style={{width:36,height:36,borderRadius:"50%",border:"1px solid "+(phase==="idle"?"rgba(29,155,240,.4)":"#2f3b47"),background:"transparent",color:phase==="idle"?"#1d9bf0":"#2f3b47",cursor:phase==="idle"?"pointer":"not-allowed",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,transition:"all .15s"}}>
+                    🎬
+                  </button>
+                  {file&&!thumbUrl&&<span style={{fontSize:11,color:"#71767b",maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{file.name}</span>}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  {/* Anel contador de caracteres (igual ao X) */}
+                  <div style={{position:"relative",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    <svg viewBox="0 0 22 22" width="22" height="22" style={{transform:"rotate(-90deg)"}}>
+                      <circle cx="11" cy="11" r="9" fill="none" stroke="#2f3b47" strokeWidth="2.2"/>
+                      <circle cx="11" cy="11" r="9" fill="none" strokeWidth="2.2"
+                        stroke={charLeft<0?"#f4212e":charLeft<=20?"#ffd400":"#1d9bf0"}
+                        strokeDasharray={`${Math.max(0,Math.min(1,(280-charLeft)/280))*56.5} 56.5`}
+                        strokeLinecap="round"/>
+                    </svg>
+                    {charLeft<=20&&<span style={{position:"absolute",fontSize:8,fontWeight:700,color:charLeft<0?"#f4212e":"#71767b"}}>{charLeft}</span>}
+                  </div>
+                  <button onClick={handlePost} disabled={!canPost}
+                    style={{padding:"9px 24px",borderRadius:9999,border:"none",background:canPost?"#1d9bf0":"#1e2832",color:canPost?"#fff":"#71767b",fontSize:14,fontWeight:700,cursor:canPost?"pointer":"not-allowed",display:"flex",alignItems:"center",gap:8,transition:"all .2s"}}>
+                    {phase==="posting"?<><Spin size={14} color="#fff"/>Publicando…</>:"Publicar"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [session,   setSession]   = useState(null);
+      const [query,     setQuery]     = useState("");
+      const [type,      setType]      = useState("keyword");
+      const count = 20; // vídeos por página
+      const [results,     setResults]     = useState([]);
+      const [searching,   setSearching]   = useState(false);
+      const [loadingMore, setLoadingMore] = useState(false);
+      const [hasMore,     setHasMore]     = useState(false);
+      const [searchId,    setSearchId]    = useState(null);
+      const [selVideo,    setSelVideo]    = useState(null);
+      const [showModal,   setShowModal]   = useState(false);
+      const [err,         setErr]         = useState("");
+      const [platform,    setPlatform]    = useState("x");      // "x" | "xhamster" | "xvideos"
+      const [siteSort,    setSiteSort]    = useState("relevance");
+      const [siteDuration,setSiteDuration]= useState("any");
+      const [xfCategory,  setXfCategory]  = useState("straight"); // xFree: straight | gay | trans | all
+      const [phCategory,  setPhCategory]  = useState("straight"); // Pornhub: straight | gay | sapphic | trans
+      const [siteCategory,setSiteCategory]= useState("straight"); // xHamster/XVideos: straight | gay | trans
+      const [checked,     setChecked]     = useState(new Set()); // multi-select IDs
+      const [bulkFmt,     setBulkFmt]     = useState("best");
+      const [bulkTasks,   setBulkTasks]   = useState(null);    // null | task array
+      const [showPost,    setShowPost]    = useState(false);   // modal de publicar tweet
+
+      // Library (downloaded videos)
+      const [view,       setView]       = useState("search"); // "search" | "library"
+      const [library,    setLibrary]    = useState([]);
+      const [libLoading, setLibLoading] = useState(false);
+      const [libErr,     setLibErr]     = useState("");
+      const [playerIdx,  setPlayerIdx]  = useState(null); // index into library, or null
+
+      async function loadLibrary(){
+        setLibLoading(true); setLibErr("");
+        try{
+          const r = await fetch(API+"/library");
+          const d = await r.json();
+          setLibrary(d.items||[]);
+          if(!d.items?.length) setLibErr("Nenhum vídeo baixado encontrado.");
+        }catch{ setLibErr("Erro de conexão."); }
+        setLibLoading(false);
+      }
+
+      async function deleteCurrentVideo(){
+        const item = library[playerIdx];
+        if(!item) return;
+        try{ await fetch(API+"/library/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:item.name})}); }catch{}
+        setLibrary(prev=>{
+          const next = prev.filter(it=>it.name!==item.name);
+          setPlayerIdx(next.length ? Math.min(playerIdx, next.length-1) : null);
+          return next;
+        });
+      }
+
+      // Background download tracking — persisted to localStorage so downloads
+      // started before closing the browser keep showing progress on reopen
+      // (the download itself already runs server-side in a thread; this just
+      // lets the UI find it again).
+      const BG_STORAGE_KEY = "scrapperx_bg_tasks";
+      const bgRef   = useRef([]);     // [{taskId, title, prog}]
+      const bgIvRef = useRef(null);
+      const [bgTasks, setBgTasks] = useState([]);
+
+      function saveBgToStorage(items) {
+        try {
+          const pending = items.filter(t=>t.prog.status!=="complete"&&t.prog.status!=="error");
+          localStorage.setItem(BG_STORAGE_KEY, JSON.stringify(pending.map(t=>({taskId:t.taskId,title:t.title}))));
+        } catch {}
+      }
+
+      function addBgTasks(newItems) {
+        // newItems: [{taskId, title}]
+        const items = newItems.map(t=>({taskId:t.taskId,title:t.title,prog:{status:"downloading",percent:0}}));
+        bgRef.current = [...bgRef.current, ...items];
+        setBgTasks([...bgRef.current]);
+        saveBgToStorage(bgRef.current);
+        if (bgIvRef.current) return;
+        bgIvRef.current = setInterval(async()=>{
+          const cur = bgRef.current;
+          const next = await Promise.all(cur.map(async item=>{
+            if (!item.taskId||item.prog.status==="complete"||item.prog.status==="error") return item;
+            try{
+              const p=await(await fetch(API+"/download/progress/"+item.taskId)).json();
+              if (p.status==="not_found") return {...item,prog:{status:"error",error:"Tarefa não encontrada (servidor reiniciou?)"}};
+              return {...item,prog:p};
+            }catch{ return item; }
+          }));
+          bgRef.current = next;
+          setBgTasks([...next]);
+          saveBgToStorage(next);
+          if (next.every(x=>x.prog.status==="complete"||x.prog.status==="error")){
+            clearInterval(bgIvRef.current); bgIvRef.current=null;
+          }
+        }, 1000);
+      }
+
+      function clearCompletedBg() {
+        const remaining = bgRef.current.filter(d=>d.prog.status!=="complete"&&d.prog.status!=="error");
+        bgRef.current = remaining;
+        setBgTasks([...remaining]);
+        saveBgToStorage(remaining);
+        if (!remaining.length && bgIvRef.current){ clearInterval(bgIvRef.current); bgIvRef.current=null; }
+      }
+
+      function toggleCheck(id) {
+        setChecked(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
+      }
+      function clearChecked() { setChecked(new Set()); }
+      function selectAll()    { setChecked(new Set(results.map(v=>v.id))); }
+
+      function startBulkDownload() {
+        const vids = results.filter(v=>checked.has(v.id));
+        if (!vids.length) return;
+        setBulkTasks(vids.map(v=>({url:v.url,title:v.title,uploader:v.uploader,fmt:bulkFmt})));
+        clearChecked();
+      }
+
+      useEffect(()=>{
+        fetch(API+"/session").then(r=>r.json()).then(setSession).catch(()=>setSession({logged_in:false}));
+      },[]);
+
+      // Resume tracking any downloads still running when the browser was closed
+      useEffect(()=>{
+        try {
+          const saved = JSON.parse(localStorage.getItem(BG_STORAGE_KEY) || "[]");
+          if (saved.length) addBgTasks(saved);
+        } catch {}
+      },[]); // eslint-disable-line
+
+      // Auto-inicia feed ao clicar nas abas Para Você / Seguindo (simula navegador)
+      const firstRenderRef = useRef(true);
+      useEffect(()=>{
+        if (firstRenderRef.current) { firstRenderRef.current = false; return; }
+        if (platform === "x" && (type === "home" || type === "following")) search();
+        if (platform !== "x" && type === "home") search();
+      }, [type, platform, xfCategory, phCategory, siteCategory]); // eslint-disable-line
+
+      // Auto-scroll infinito: carrega mais ao chegar perto do fim da página
+      useEffect(()=>{
+        if (!hasMore || loadingMore || searching) return;
+        function onScroll() {
+          if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 700) {
+            loadMore();
+          }
+        }
+        window.addEventListener("scroll", onScroll, {passive:true});
+        return () => window.removeEventListener("scroll", onScroll);
+      }, [hasMore, loadingMore, searching, searchId]); // eslint-disable-line
+
+      async function logout(){
+        await fetch(API+"/auth/logout",{method:"POST"});
+        setSession({logged_in:false}); setResults([]); setQuery("");
+      }
+
+      async function search(){
+        const needQuery = platform==="x"                                    ? (type!=="home" && type!=="following")
+                        : (platform==="xfree"||platform==="pornhub"||platform==="xhamster"||platform==="xvideos") ? type!=="home"
+                        : true;
+        if(needQuery&&!query.trim()) return;
+        setSearching(true); setErr(""); setResults([]); setHasMore(false); setSearchId(null); clearChecked();
+        try{
+          const body = platform==="x"
+            ? {query:query.trim(),type,platform,duration:siteDuration,count}
+            : platform==="xfree"
+              ? {query:(type==="home"?"":query.trim()),platform,type,category:xfCategory,count}
+              : platform==="pornhub"
+                ? {query:(type==="home"?"":query.trim()),platform,type,category:phCategory,count}
+                : {query:(type==="home"?"":query.trim()),platform,type,sort:siteSort,duration:siteDuration,category:siteCategory,count};
+          const r=await fetch(API+"/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+          const d=await r.json();
+          if(d.error) setErr(d.error);
+          else{
+            setResults(d.results||[]);
+            setHasMore(!!d.has_more);
+            setSearchId(d.search_id||null);
+            if(!d.results?.length) setErr("Nenhum vídeo encontrado.");
+          }
+        }catch{ setErr("Erro de conexão."); }
+        setSearching(false);
+      }
+
+      async function loadMore(){
+        if(!searchId||loadingMore) return;
+        setLoadingMore(true); setErr("");
+        try{
+          const r=await fetch(API+"/search/more",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({search_id:searchId,count})});
+          const d=await r.json();
+          if(d.error){ setErr(d.error); setHasMore(false); }
+          else{
+            setResults(prev=>[...prev,...(d.results||[])]);
+            setHasMore(!!d.has_more);
+          }
+        }catch{ setErr("Erro de conexão."); }
+        setLoadingMore(false);
+      }
+
+      if(session===null) return <div style={{minHeight:"100vh",background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}><Spin size={36}/></div>;
+      if(!session.logged_in) return <AuthScreen onSuccess={()=>fetch(API+"/session").then(r=>r.json()).then(setSession)}/>;
+
+      const tabs=[
+        {id:"home",     icon:<HomeI/>,  label:"Para Você"},
+        {id:"following",icon:<UsersI/>,label:"Seguindo"},
+        {id:"keyword",  icon:<KeyI/>,   label:"Palavra-chave"},
+        {id:"hashtag",  icon:<HashI/>,  label:"Hashtag"},
+        {id:"user",     icon:<UserI/>,  label:"Usuário"},
+      ];
+      const ph={keyword:"Ex: futebol, tecnologia...",hashtag:"Ex: #brasil ou brasil",user:"Ex: @usuario ou usuario",home:"",following:""};
+      const isHomeFeed = type==="home"||type==="following";
+      const methodLabel={chrome:"Chrome",firefox:"Firefox",edge:"Edge",brave:"Brave",opera:"Opera",paste:"cookies colados"};
+
+      return (
+        <div style={{minHeight:"100vh",background:"#000",color:"#e7e9ea",fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          <style>{}</style>
+
+          <div style={{borderBottom:"1px solid #1e2832",position:"sticky",top:0,background:"rgba(0,0,0,.92)",backdropFilter:"blur(12px)",zIndex:100}}>
+            <div className="page-container hdr-row" style={{maxWidth:960,margin:"0 auto",padding:"0 20px",height:56,display:"flex",alignItems:"center",gap:14}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,color:"#e7e9ea"}}>
+                <div style={{color:"#1d9bf0"}}><XI/></div>
+                <span className="hdr-title-text" style={{fontWeight:800,fontSize:16,letterSpacing:"-0.3px"}}>Video Scraper</span>
+              </div>
+              <div style={{flex:1}}/>
+              {session.download_dir&&(
+                <div className="hdr-extra" style={{fontSize:11,color:"#71767b",display:"flex",alignItems:"center",gap:5,maxWidth:280,overflow:"hidden"}}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#71767b" strokeWidth="2" strokeLinecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={session.download_dir}>{session.download_dir}</span>
+                </div>
+              )}
+              <div className="hdr-extra" style={{fontSize:12,color:"#71767b",flexShrink:0}}>via <span style={{color:"#e7e9ea",fontWeight:500}}>{methodLabel[session.method]||"cookies"}</span></div>
+              <button onClick={()=>{ const nv=view==="library"?"search":"library"; setView(nv); if(nv==="library") loadLibrary(); }}
+                style={{display:"flex",alignItems:"center",gap:6,background:view==="library"?"rgba(29,155,240,.15)":"none",
+                  border:"1px solid "+(view==="library"?"rgba(29,155,240,.3)":"#2f3b47"),borderRadius:9999,
+                  color:view==="library"?"#1d9bf0":"#71767b",fontSize:12,padding:"5px 12px",cursor:"pointer",fontWeight:500,flexShrink:0}}>
+                {view==="library"?<><SrchI/><span className="hdr-btn-label">Buscar</span></>:<><FolderI/><span className="hdr-btn-label">Meus Vídeos</span></>}
+              </button>
+              <button onClick={()=>setShowPost(true)}
+                title="Publicar vídeo no X"
+                style={{display:"flex",alignItems:"center",gap:6,background:"rgba(29,155,240,.15)",border:"1px solid rgba(29,155,240,.3)",borderRadius:9999,color:"#1d9bf0",fontSize:12,padding:"5px 12px",cursor:"pointer",fontWeight:700,flexShrink:0,transition:"all .15s"}}>
+                <PencilI/><span className="hdr-btn-label">Publicar</span>
+              </button>
+              <button onClick={logout} style={{background:"none",border:"1px solid #2f3b47",borderRadius:9999,color:"#71767b",fontSize:12,padding:"5px 12px",cursor:"pointer",fontWeight:500,flexShrink:0}}>Sair</button>
+            </div>
+          </div>
+
+          <div className="page-container" style={{maxWidth:960,margin:"0 auto",padding:"26px 20px "+(checked.size>0?"140px":"64px"),transition:"padding .2s"}}>
+          {view==="library" ? (
+            <LibraryGrid items={library} loading={libLoading} err={libErr} onOpen={setPlayerIdx}/>
+          ) : (<>
+            <div style={{background:"#0d1117",border:"1px solid #1e2832",borderRadius:16,padding:20,marginBottom:26,boxShadow:"0 4px 24px rgba(0,0,0,.3)"}}>
+
+              {/* Platform selector */}
+              <div style={{display:"flex",gap:5,marginBottom:14,background:"#0a0f14",padding:4,borderRadius:10,border:"1px solid #1e2832"}}>
+                {[
+                  {id:"x",        label:"𝕏 (Twitter)"},
+                  {id:"xhamster", label:"xHamster"},
+                  {id:"xvideos",  label:"XVideos"},
+                  {id:"xfree",    label:"xFree"},
+                  {id:"pornhub",  label:"Pornhub"},
+                ].map(p=>(
+                  <button key={p.id} onClick={()=>{setPlatform(p.id);setResults([]);setErr("");setSearchId(null);setSiteSort("relevance");setSiteDuration("any");setXfCategory("straight");setPhCategory("straight");setSiteCategory("straight");setType("home");}}
+                    style={{flex:1,padding:"7px 4px",borderRadius:8,border:"none",
+                      background:platform===p.id?"rgba(29,155,240,.15)":"transparent",
+                      color:platform===p.id?"#1d9bf0":"#71767b",
+                      fontSize:12,fontWeight:platform===p.id?700:400,cursor:"pointer",
+                      transition:"all .15s",outline:platform===p.id?"1px solid rgba(29,155,240,.3)":"none"}}>
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* X-only: search type tabs */}
+              {platform==="x"&&(
+                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"#0a0f14",padding:4,borderRadius:10,border:"1px solid #1e2832"}}>
+                  {tabs.map(t=>(
+                    <button key={t.id} onClick={()=>setType(t.id)} style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",background:type===t.id?"rgba(29,155,240,.15)":"transparent",color:type===t.id?"#1d9bf0":"#71767b",fontSize:12,fontWeight:type===t.id?700:400,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5,transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
+                      {t.icon}<span style={{whiteSpace:"nowrap"}}>{t.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* xFree: mode tabs (Home / Busca) */}
+              {platform==="xfree"&&(
+                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"#0a0f14",padding:4,borderRadius:10,border:"1px solid #1e2832"}}>
+                  {[{id:"home",label:"🏠 Home"},{id:"search",label:"🔍 Busca"}].map(t=>(
+                    <button key={t.id} onClick={()=>setType(t.id)}
+                      style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",
+                        background:type===t.id?"rgba(29,155,240,.15)":"transparent",
+                        color:type===t.id?"#1d9bf0":"#71767b",fontSize:12,fontWeight:type===t.id?700:400,
+                        cursor:"pointer",transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* xFree: category filter (Hétero / Gay / Trans / Tudo) — applies to Home and Busca */}
+              {platform==="xfree"&&(
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:11,color:"#71767b",display:"block",marginBottom:5}}>Categoria</label>
+                  <select value={xfCategory} onChange={e=>setXfCategory(e.target.value)}
+                    style={{width:"100%",padding:"9px 10px",background:"#0a0f14",border:"1px solid #1e2832",
+                      borderRadius:8,color:"#e7e9ea",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    <option value="straight">❤️ Hétero</option>
+                    <option value="gay">🏳️‍🌈 Gay</option>
+                    <option value="trans">🏳️‍⚧️ Trans</option>
+                    <option value="all">💜 Tudo</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Pornhub: mode tabs (Home / Busca) */}
+              {platform==="pornhub"&&(
+                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"#0a0f14",padding:4,borderRadius:10,border:"1px solid #1e2832"}}>
+                  {[{id:"home",label:"🏠 Home"},{id:"search",label:"🔍 Busca"}].map(t=>(
+                    <button key={t.id} onClick={()=>setType(t.id)}
+                      style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",
+                        background:type===t.id?"rgba(29,155,240,.15)":"transparent",
+                        color:type===t.id?"#1d9bf0":"#71767b",fontSize:12,fontWeight:type===t.id?700:400,
+                        cursor:"pointer",transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Pornhub: category filter (Heterossexual / Gay / Sáfica / Trans) — aplica-se a Home e Busca */}
+              {platform==="pornhub"&&(
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:11,color:"#71767b",display:"block",marginBottom:5}}>Categoria</label>
+                  <select value={phCategory} onChange={e=>setPhCategory(e.target.value)}
+                    style={{width:"100%",padding:"9px 10px",background:"#0a0f14",border:"1px solid #1e2832",
+                      borderRadius:8,color:"#e7e9ea",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    <option value="straight">❤️ Heterossexual</option>
+                    <option value="gay">🏳️‍🌈 Gay</option>
+                    <option value="sapphic">🏳️‍🌈 Sáfica</option>
+                    <option value="trans">🏳️‍⚧️ Trans</option>
+                  </select>
+                  {phCategory==="trans"&&type==="search"&&(
+                    <div style={{marginTop:8,padding:"10px 12px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:8,fontSize:12,color:"#71767b",lineHeight:1.5}}>
+                      ℹ️ O Pornhub não tem busca por palavra-chave na categoria Trans — mostrando os vídeos em destaque dessa categoria (a busca digitada é ignorada).
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* xHamster/XVideos: mode tabs (Home / Busca) */}
+              {(platform==="xhamster"||platform==="xvideos")&&(
+                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"#0a0f14",padding:4,borderRadius:10,border:"1px solid #1e2832"}}>
+                  {[{id:"home",label:"🏠 Home"},{id:"search",label:"🔍 Busca"}].map(t=>(
+                    <button key={t.id} onClick={()=>setType(t.id)}
+                      style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",
+                        background:type===t.id?"rgba(29,155,240,.15)":"transparent",
+                        color:type===t.id?"#1d9bf0":"#71767b",fontSize:12,fontWeight:type===t.id?700:400,
+                        cursor:"pointer",transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* xHamster/XVideos: category filter (Heterossexual / Gay / Trans) — aplica-se a Home e Busca */}
+              {(platform==="xhamster"||platform==="xvideos")&&(
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:11,color:"#71767b",display:"block",marginBottom:5}}>Categoria</label>
+                  <select value={siteCategory} onChange={e=>setSiteCategory(e.target.value)}
+                    style={{width:"100%",padding:"9px 10px",background:"#0a0f14",border:"1px solid #1e2832",
+                      borderRadius:8,color:"#e7e9ea",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    <option value="straight">❤️ Heterossexual</option>
+                    <option value="gay">🏳️‍🌈 Gay</option>
+                    <option value="trans">🏳️‍⚧️ Trans</option>
+                  </select>
+                  {platform==="xvideos"&&type==="home"&&(
+                    <div style={{marginTop:8,padding:"10px 12px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:8,fontSize:12,color:"#71767b",lineHeight:1.5}}>
+                      ℹ️ A Home do XVideos não pagina — mostra sempre o mesmo destaque da categoria (sem "carregar mais").
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Query input — hidden while any platform's Home tab is active */}
+              {!(platform==="x"&&isHomeFeed)&&!(platform!=="x"&&type==="home")&&(
+                <div style={{position:"relative",marginBottom:14}}>
+                  <div style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"#71767b"}}><SrchI/></div>
+                  <input value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&search()}
+                    placeholder={platform==="x"?ph[type]:(platform==="xhamster"?"Buscar no xHamster…":(platform==="xfree"?"Buscar no xFree…":platform==="pornhub"?"Buscar no Pornhub…":"Buscar no XVideos…"))}
+                    style={{width:"100%",padding:"12px 14px 12px 42px",background:"#0a0f14",border:"1px solid #1e2832",borderRadius:10,color:"#e7e9ea",fontSize:14,transition:"border-color .15s"}}
+                    onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="#1e2832"}/>
+                </div>
+              )}
+              {platform==="x"&&isHomeFeed&&(
+                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"#71767b",marginBottom:14,lineHeight:1.6}}>
+                  {type==="home"
+                    ? "🏠 Carregará vídeos da aba \"Para você\" do seu feed usando sua sessão autenticada."
+                    : "👥 Carregará vídeos da aba \"Seguindo\" (perfis que você segue) usando sua sessão autenticada."}
+                </div>
+              )}
+              {platform==="xfree"&&type==="home"&&(
+                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"#71767b",marginBottom:14,lineHeight:1.6}}>
+                  🏠 Carregará os vídeos em destaque da home do <strong style={{color:"#8b98a5"}}>xFree.com</strong> (sem necessidade de login).
+                </div>
+              )}
+              {platform==="pornhub"&&type==="home"&&(
+                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"#71767b",marginBottom:14,lineHeight:1.6}}>
+                  🏠 Carregará os vídeos em destaque da página principal do <strong style={{color:"#8b98a5"}}>Pornhub</strong> na categoria selecionada (sem necessidade de login).
+                </div>
+              )}
+              {(platform==="xhamster"||platform==="xvideos")&&type==="home"&&(
+                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"#71767b",marginBottom:14,lineHeight:1.6}}>
+                  🏠 Carregará os vídeos em destaque da página principal do <strong style={{color:"#8b98a5"}}>{platform==="xhamster"?"xHamster":"XVideos"}</strong> na categoria selecionada (sem necessidade de login).
+                </div>
+              )}
+
+              {/* X-only: duration filter */}
+              {platform==="x"&&(
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:11,color:"#71767b",display:"block",marginBottom:5}}>Duração do vídeo</label>
+                  <select value={siteDuration} onChange={e=>setSiteDuration(e.target.value)}
+                    style={{width:"100%",padding:"9px 10px",background:"#0a0f14",border:"1px solid #1e2832",
+                      borderRadius:8,color:"#e7e9ea",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    <option value="any">Qualquer duração</option>
+                    <option value="short">Curtos (até 10 min)</option>
+                    <option value="medium">Médios (10–30 min)</option>
+                    <option value="long">Longos (mais de 30 min)</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Site filters: sort + duration (xHamster and XVideos only) */}
+              {platform!=="x"&&platform!=="xfree"&&(
+                <div style={{display:"flex",gap:10,marginBottom:14}}>
+                  <div style={{flex:1}}>
+                    <label style={{fontSize:11,color:"#71767b",display:"block",marginBottom:5}}>Ordenar por</label>
+                    <select value={siteSort} onChange={e=>setSiteSort(e.target.value)}
+                      style={{width:"100%",padding:"9px 10px",background:"#0a0f14",border:"1px solid #1e2832",
+                        borderRadius:8,color:"#e7e9ea",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                      <option value="relevance">Relevância</option>
+                      <option value="newest">Mais recentes</option>
+                      <option value="views">Mais vistos</option>
+                      <option value="best">Melhor avaliados</option>
+                      <option value="longest">Mais longos</option>
+                    </select>
+                  </div>
+                  <div style={{flex:1}}>
+                    <label style={{fontSize:11,color:"#71767b",display:"block",marginBottom:5}}>Duração</label>
+                    <select value={siteDuration} onChange={e=>setSiteDuration(e.target.value)}
+                      style={{width:"100%",padding:"9px 10px",background:"#0a0f14",border:"1px solid #1e2832",
+                        borderRadius:8,color:"#e7e9ea",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                      <option value="any">Qualquer duração</option>
+                      <option value="short">Curtos (até 10 min)</option>
+                      <option value="medium">Médios (10–30 min)</option>
+                      <option value="long">Longos (mais de 30 min)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {/* Search button */}
+              {(()=>{
+                const needQuery = platform==="x" ? (type!=="home" && type!=="following") : type!=="home";
+                const disabled  = searching||(needQuery&&!query.trim());
+                const btnLabel  = platform==="x"&&type==="home"        ? "Carregar Para Você"
+                                : platform==="x"&&type==="following"   ? "Carregar Seguindo"
+                                : type==="home"                        ? "Carregar "+({xfree:"xFree",pornhub:"Pornhub",xhamster:"xHamster",xvideos:"XVideos"}[platform]||platform)+" Home"
+                                : platform==="xhamster"                ? "Buscar no xHamster"
+                                : platform==="xvideos"                 ? "Buscar no XVideos"
+                                : platform==="xfree"                   ? "Buscar no xFree"
+                                : platform==="pornhub"                 ? "Buscar no Pornhub"
+                                : "Buscar Vídeos";
+                return (
+                  <button onClick={search} disabled={disabled}
+                    style={{width:"100%",padding:"12px 0",borderRadius:9999,border:"none",
+                      background:disabled?"#1e2832":"#1d9bf0",
+                      color:disabled?"#71767b":"#fff",
+                      fontSize:14,fontWeight:700,cursor:disabled?"not-allowed":"pointer",
+                      display:"flex",alignItems:"center",justifyContent:"center",gap:10,transition:"background .2s"}}>
+                    {searching?<><Spin size={16} color="#fff"/>Buscando…</>:<><SrchI/>{btnLabel}</>}
+                  </button>
+                );
+              })()}
+            </div>
+
+            {err&&<div style={{background:"rgba(244,33,46,.08)",border:"1px solid rgba(244,33,46,.3)",borderRadius:10,padding:"12px 16px",color:"#f4212e",fontSize:13,marginBottom:22,lineHeight:1.5}}>{err}</div>}
+
+            {results.length>0&&(
+              <div style={{animation:"fadeIn .4s ease"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:8}}>
+                  <span style={{fontSize:14,color:"#e7e9ea",fontWeight:600}}>{results.length} vídeo{results.length!==1?"s":""} encontrado{results.length!==1?"s":""}</span>
+                  <div style={{display:"flex",alignItems:"center",gap:12}}>
+                    <span style={{fontSize:12,color:"#71767b"}}>▶ assistir · <DlI/> baixar</span>
+                    <button
+                      onClick={checked.size===results.length?clearChecked:selectAll}
+                      style={{background:"none",border:"1px solid #2f3b47",borderRadius:8,
+                        color:"#71767b",fontSize:12,padding:"4px 10px",cursor:"pointer"}}>
+                      {checked.size===results.length?"Desmarcar todos":"Selecionar todos"}
+                    </button>
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:13}}>
+                  {results.map(v=><VideoCard key={v.id} video={v}
+                    onSelect={vid=>{setSelVideo(vid);setShowModal(true);}}
+                    selected={selVideo?.id===v.id&&showModal}
+                    isChecked={checked.has(v.id)}
+                    onToggleCheck={toggleCheck}/>)}
+                </div>
+
+                {(hasMore||loadingMore)&&(
+                  <div style={{display:"flex",justifyContent:"center",marginTop:24}}>
+                    <button onClick={loadMore} disabled={loadingMore}
+                      style={{padding:"11px 36px",borderRadius:9999,border:"1px solid #1d9bf0",background:loadingMore?"#0a0f14":"transparent",color:"#1d9bf0",fontSize:14,fontWeight:700,cursor:loadingMore?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:10,transition:"all .2s",opacity:loadingMore?.6:1}}>
+                      {loadingMore?<><Spin size={16} color="#1d9bf0"/>Carregando mais…</>:"⬇ Carregar próximos "+count+" vídeos"}
+                    </button>
+                  </div>
+                )}
+                {!hasMore&&results.length>0&&!loadingMore&&(
+                  <p style={{textAlign:"center",marginTop:20,fontSize:12,color:"#2f3b47"}}>Fim dos resultados</p>
+                )}
+              </div>
+            )}
+
+            {!searching&&results.length===0&&!err&&(
+              <div style={{textAlign:"center",paddingTop:48,color:"#71767b"}}>
+                <div style={{fontSize:44,marginBottom:14,opacity:.35}}>🎬</div>
+                <div style={{fontSize:15,fontWeight:500,color:"#2f3b47",marginBottom:6}}>Nenhuma busca realizada</div>
+                <div style={{fontSize:13}}>Use o painel acima para buscar vídeos</div>
+              </div>
+            )}
+          </>)}
+          </div>
+
+          {showModal&&selVideo&&(
+            <FormatModal video={selVideo} onClose={task=>{
+              setShowModal(false);
+              if(task) addBgTasks([task]);
+            }}/>
+          )}
+
+          {checked.size>0&&(
+            <BulkActionBar
+              count={checked.size} total={results.length}
+              fmt={bulkFmt} onFmtChange={setBulkFmt}
+              onDownload={startBulkDownload}
+              onSelectAll={selectAll}
+              onClear={clearChecked}/>
+          )}
+          {bulkTasks&&(
+            <BulkProgressModal tasks={bulkTasks} onClose={running=>{
+              setBulkTasks(null);
+              if(running?.length) addBgTasks(running);
+            }}/>
+          )}
+
+          {playerIdx!==null&&library[playerIdx]&&(
+            <PlayerModal
+              items={library} index={playerIdx}
+              onClose={()=>setPlayerIdx(null)}
+              onPrev={()=>setPlayerIdx(i=>Math.max(0,i-1))}
+              onNext={()=>setPlayerIdx(i=>Math.min(library.length-1,i+1))}
+              onDelete={deleteCurrentVideo}/>
+          )}
+
+          <BgTray tasks={bgTasks} onClear={clearCompletedBg}/>
+
+          {showPost&&<PostModal onClose={()=>setShowPost(false)}/>}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<Root/>);
+  </script>
+</body>
+</html>
