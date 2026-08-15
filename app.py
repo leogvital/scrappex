@@ -2575,6 +2575,81 @@ if os.path.exists(COOKIES_FILE):
         print(f"Startup cookie validation failed: {ex}")
 
 
+# ── Watchdog: catches what the reactive cleanup paths (_ss_close()/_xf_close()
+# on error, or the timeout check in /api/search/more) can't ──────────────────
+# Neither of those runs unless a *new* request happens to touch the stale
+# session — if a user just closes the tab after starting a search and never
+# calls "load more" again, that Chrome session would otherwise idle forever.
+# Same for a session orphaned by the server itself being killed (`kill -9`,
+# OOM): the next process's _SS/_XF_SS start out empty, so it has no idea the
+# old chromedriver/Chrome tree even exists — the exact ~15h/~1.5GB leak found
+# in production before _hard_kill_driver existed. A periodic sweep closes idle
+# tracked sessions and separately kills any chromedriver process older than
+# _WATCHDOG_ORPHAN_AGE that isn't backing a currently tracked session, so a
+# leak survives at most one sweep interval instead of indefinitely.
+_WATCHDOG_INTERVAL    = 120   # seconds between sweeps
+_WATCHDOG_ORPHAN_AGE  = 900   # seconds — well past any real navigation/search,
+                              # so nothing legitimate is still "untracked" this long
+
+
+def _watchdog_sweep():
+    now = time.time()
+    try:
+        if _SS.get("driver") and now - _SS.get("last_used", 0) > _SS_TIMEOUT:
+            print("  Watchdog: sessão do X ociosa — encerrando.")
+            _ss_close()
+    except Exception as e:
+        print(f"  Watchdog: erro encerrando sessão do X: {e}")
+
+    try:
+        if _XF_SS.get("driver") and now - _XF_SS.get("last_used", 0) > _XF_SS_TIMEOUT:
+            print("  Watchdog: sessão do xfree ociosa — encerrando.")
+            _xf_close()
+    except Exception as e:
+        print(f"  Watchdog: erro encerrando sessão do xfree: {e}")
+
+    tracked_pids = set()
+    for ss in (_SS, _XF_SS):
+        drv = ss.get("driver")
+        if drv:
+            try:
+                tracked_pids.add(drv.service.process.pid)
+            except Exception:
+                pass
+
+    try:
+        for proc in psutil.process_iter(["pid", "name", "create_time"]):
+            try:
+                name = (proc.info["name"] or "").lower()
+                if "chromedriver" not in name:
+                    continue
+                if proc.info["pid"] in tracked_pids:
+                    continue
+                age = now - proc.info["create_time"]
+                if age <= _WATCHDOG_ORPHAN_AGE:
+                    continue
+                print(f"  Watchdog: matando chromedriver órfão pid={proc.info['pid']} (idade {int(age)}s).")
+                for child in proc.children(recursive=True):
+                    try:
+                        child.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+                proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+    except Exception as e:
+        print(f"  Watchdog: erro varrendo processos órfãos: {e}")
+
+
+def _watchdog_loop():
+    while True:
+        time.sleep(_WATCHDOG_INTERVAL)
+        _watchdog_sweep()
+
+
+threading.Thread(target=_watchdog_loop, daemon=True, name="scrapperx-watchdog").start()
+
+
 if __name__ == "__main__":
     print(f"📁 Download dir: {DOWNLOAD_DIR}")
     print(f"🍪 Cookies file: {COOKIES_FILE}")
