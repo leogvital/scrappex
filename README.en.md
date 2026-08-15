@@ -1,0 +1,358 @@
+# X Video Scraper
+
+*[Leia em português](README.md)*
+
+Local web application to search and download videos from **X (Twitter)**, **XHamster**, **XVideos**, **xFree** and **Pornhub**.
+
+> See [ROADMAP.md](ROADMAP.md) for what's already done and what's planned next.
+
+## Architecture Overview
+
+```
+scrapperx/
+├── app.py               # Flask backend (REST API)
+├── index.html            # React frontend (SPA, no build step)
+├── setup.sh              # Linux/Mac — installs dependencies
+├── start.sh              # Linux/Mac — starts the server (foreground, Gunicorn)
+├── restart.sh             # Linux/Mac — restarts in background, with log
+├── setup_windows.bat      # Windows — installs dependencies
+├── start_windows.bat      # Windows — starts the server (foreground, Waitress)
+├── restart_windows.bat    # Windows — restarts in background, with log
+└── venv/                 # Python virtual environment
+```
+
+The backend serves both the API (`/api/*`) and the frontend (`/`) in the same process — no separate server.
+
+---
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Server | Flask 3 + Gunicorn (1 worker, `gthread`, 4 threads, 600 s timeout) — **Linux/Mac**. On **Windows**, Gunicorn doesn't run (it uses `fork()`, which doesn't exist there); Waitress is used instead, with `--threads 4` for the same reason |
+| X and xFree scraping | Selenium + headless Chrome (WebDriver Manager) |
+| XHamster/XVideos/Pornhub scraping | `requests` (direct HTTP) |
+| Video download | yt-dlp |
+| Frontend | React 18 + standalone Babel (zero build step) |
+| Cookie storage | Netscape-format file at `/tmp/x_cookies.txt` |
+| Downloaded videos | `~/Downloads/X-Videos/` |
+
+**Why `gthread` + `--threads 4`**: Gunicorn's default `sync` worker processes **one request at a time** — while a slow search is in progress (Selenium scrolling on X/xFree, for example), no other request is even accepted, including `/api/download/start`. That's exactly what caused downloads to hang when clicked while more videos were auto-loading. `gthread` keeps a single process (preserving the in-memory global state — `_SS`, `_XF_SS`, `_SITE_SS`, `download_progress` — which isn't shareable across processes without an external store like Redis) but processes up to 4 requests in parallel within it, since most of the work here is I/O (waiting on Selenium, waiting on HTTP responses) and releases the GIL during those waits.
+
+---
+
+## Installation and Setup
+
+Pick the section for your OS. Both use the same `app.py`/`index.html` — only the setup/start scripts differ.
+
+### 🐧 Linux (Ubuntu/Debian) — step by step
+
+**1. Prerequisites:**
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip git
+
+# Google Chrome (needed for Selenium-based scraping — X and xFree)
+wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+sudo apt update
+sudo apt install -y google-chrome-stable
+```
+
+**2. Get the project** (if you don't already have the `scrapperx/` folder):
+```bash
+git clone https://github.com/leogvital/scrappex.git scrapperx
+cd scrapperx
+```
+
+**3. Install dependencies** (creates `venv/` and installs everything inside it — doesn't touch the system Python):
+```bash
+bash setup.sh
+```
+
+**4. Configure the app login** (see the [App Login](#app-login) section below):
+```bash
+cp .env.local.example .env.local
+# edit .env.local and set SCRAPPERX_APP_USER / SCRAPPERX_APP_PASS
+```
+
+**5. Start:**
+```bash
+# Foreground (stays attached to the terminal, Ctrl+C to stop) — good for watching logs/debugging
+bash start.sh
+
+# OR background (keeps running after closing the terminal) — good for everyday use
+bash restart.sh
+# Logs: tail -f /tmp/scrapperx.log
+```
+
+**6. Open**: [http://localhost:5000](http://localhost:5000)
+
+**Requirements:**
+- Python 3.10+
+- Google Chrome installed (for Selenium-based scraping of X and xFree)
+- `python3-venv` (included in step 1 above)
+
+---
+
+### 🪟 Windows — step by step
+
+**1. Install Python:**
+- Download from [python.org/downloads](https://www.python.org/downloads/) (3.10 or newer)
+- On the installer screen, check **"Add python.exe to PATH"** before clicking Install — this is easy to miss, and without it the `.bat` scripts won't find Python
+- Confirm by opening **Command Prompt** (`cmd`) and running `python --version`
+
+**2. Install Google Chrome:**
+- Download and install from [google.com/chrome](https://www.google.com/chrome/) (needed for Selenium-based scraping of X and xFree — `webdriver-manager` downloads the matching `chromedriver` automatically, you just need Chrome itself installed)
+
+**3. Get the project** (if you don't already have the `scrapperx/` folder):
+- Via Git: `git clone https://github.com/leogvital/scrappex.git scrapperx`
+- Or download the repository `.zip` and extract it to a folder
+
+**4. Install dependencies** — open **Command Prompt** inside the `scrapperx` folder (click the Explorer address bar, type `cmd`, press Enter) and run:
+```bat
+setup_windows.bat
+```
+This creates `venv\` and installs everything inside it (doesn't touch the system Python).
+
+**5. Configure the app login** (see the [App Login](#app-login) section below) — copy `.env.local.example` to `.env.local` and edit the `SCRAPPERX_APP_USER`/`SCRAPPERX_APP_PASS` values in a text editor.
+
+**6. Start:**
+```bat
+REM Foreground (stays attached to the window, close it to stop) — good for watching logs/debugging
+start_windows.bat
+
+REM OR background (keeps running after closing this terminal) — good for everyday use
+restart_windows.bat
+REM Logs: %TEMP%\scrapperx.log
+```
+
+**7. Open**: [http://localhost:5000](http://localhost:5000)
+
+**Requirements:**
+- Python 3.10+ with "Add to PATH" checked during install
+- Google Chrome installed
+- Windows 10/11 (the `.bat` scripts use built-in `netstat`/`taskkill`/PowerShell, nothing extra to install)
+
+**Differences from Linux**: on Windows the server runs via **Waitress** instead of **Gunicorn** (Gunicorn depends on `fork()`, which doesn't exist on Windows) — same idea, equivalent result. Automatic Chrome/Edge cookie extraction also works differently under the hood (Windows uses DPAPI for decryption; Linux uses a fixed key or the keyring via `secretstorage`), but that's already handled automatically by `yt-dlp` as a fallback — nothing extra to do.
+
+> **Alternative**: if you'd rather run the exact same commands as Linux on Windows, install **WSL2** (`wsl --install` in an administrator PowerShell) with Ubuntu, then follow the 🐧 Linux section above from inside WSL.
+
+**Note on `--no-control-socket`**: `start.sh`/`restart.sh` pass this flag to Gunicorn 26+ to disable the *control socket* (an admin feature used only by `gunicornc`, which this project doesn't use). Without it, Gunicorn tries to create `$XDG_RUNTIME_DIR/gunicorn.ctl` — if that variable leaked from a previous root session (common when switching users with `su user -c '...'` without the `-`, or `sudo -u user` without resetting the environment), it tries to write to `/run/user/0/` and fails with `PermissionError`. The HTTP server itself still comes up fine despite this error (only the control socket fails), but `--no-control-socket` eliminates the whole class of problem.
+
+---
+
+## App Login
+
+The whole app sits behind its own login screen (independent from the X cookies below), with username and password configured via environment variable — **not** hardcoded in the source (the repository is public):
+
+```bash
+# 1. Copy the template
+cp .env.local.example .env.local
+
+# 2. Edit .env.local and set:
+SCRAPPERX_APP_USER=admin
+SCRAPPERX_APP_PASS=your-password-here
+```
+
+`.env.local` is in `.gitignore` — it stays only on your machine/server; `start.sh`/`restart.sh` (and the Windows `.bat` files) load these variables automatically before starting the server. Without `.env.local` (or without `SCRAPPERX_APP_PASS` set), login is blocked for everyone — the backend warns about this in the log on startup.
+
+- Backend (`app.py`): `before_request` blocks any `/api/*` route (except `/api/auth/app-login`, `/api/auth/app-status` and `/api/health`) while `session["app_logged_in"]` isn't set.
+- **Persistent session**: `app.secret_key` is generated once and saved to `.flask_secret_key` (permission `600`) — loaded from that file on every subsequent start, so restarting the server does **not** log anyone out. On login, `session.permanent = True` + `PERMANENT_SESSION_LIFETIME = 30 days` make the cookie survive closing the browser (without this it would be a session cookie, wiped on close). If `.flask_secret_key` gets recreated by a different system user (a different owner than the server process), loading it fails with `PermissionError` on boot — delete the file so the current process recreates it with the right owner.
+- **X login also survives restarts**: on boot, if `x_cookies.txt` already exists, the backend runs `validate_cookies()` automatically and restores `session_state["logged_in"]` — without this, even with valid X cookies intact on disk, a restart would force the X auth screen again every time.
+- Endpoints: `POST /api/auth/app-login`, `POST /api/auth/app-logout`, `GET /api/auth/app-status`.
+- Frontend (`index.html`): `Root` gates rendering before `App` — shows `AppLoginScreen` if not authenticated, otherwise renders `App` with a floating "🔒 Sair" (Log out) button in the bottom-left corner.
+
+---
+
+## Authentication
+
+Access to X requires valid session cookies. Three methods available:
+
+### 1. Auto-detection (recommended for Linux)
+Detects and imports cookies directly from Chrome, Firefox or Edge's SQLite database.
+- Chrome on Linux doesn't encrypt cookies by default
+- Automatic fallback via yt-dlp if direct reading fails
+
+### 2. Via yt-dlp
+Uses yt-dlp's native extractor, which handles the system keyring's encryption.
+Supports: Chrome, Firefox, Edge, Opera, Brave.
+> Close the browser before using this method.
+
+### 3. Paste cookies manually
+Paste the JSON exported by the [Cookie-Editor](https://chrome.google.com/webstore/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm) extension, or Netscape-format text.
+
+After importing, cookies are validated via a `POST` to a `media/upload.json` INIT call (`total_bytes=1`) — the same endpoint tweet publishing actually uses.
+
+> **Historical note**: until 2026-08, validation used `GET /i/api/1.1/account/verify_credentials.json`. That endpoint started always returning `404 {"message":"Sorry, that page does not exist","code":34}` — including for genuinely valid cookies (confirmed: the same cookies worked fine against the `media/upload.json` INIT call). In other words, it's no longer a reliable signal of an expired session — X discontinued the endpoint itself for this kind of auth. This caused a false logout: `session_state["logged_in"]` would get stuck at `False` (or worse, stuck at a previous `True` — `/api/auth/validate` only *flipped the flag on* on success, never *off* on failure) even with working cookies, and the user would see raw X API errors (`"Failed to authenticate. API Error: 401 OAuth access token has expired."`) instead of the re-auth screen. Swapping the validation endpoint fixed both issues.
+
+---
+
+## Search Features
+
+### X (Twitter) — via Selenium
+| Mode | Description |
+|---|---|
+| For You | Main feed (`/home`) — starts automatically when the tab is clicked |
+| Following | "Following" feed (clicks the tab via Selenium) — starts automatically |
+| Keyword | Search with `filter:videos` |
+| Hashtag | Hashtag page with video filter |
+| User | Profile's `/media` tab |
+
+Selenium keeps **one persistent Chrome session** across pagination — the driver isn't restarted on every "Load more", avoiding re-scrolling and duplicates. The session expires after 600 s of inactivity or 60 scrolls.
+
+**Infinite auto-scroll:** upon reaching 700 px from the bottom of the page, new results load automatically (no button click), mimicking X's native navigation.
+
+### XHamster and XVideos — via HTTP
+Direct HTML page scraping, no headless browser. Two tabs — Home and Search — plus an orientation category (❤️ Straight / 🏳️‍🌈 Gay / 🏳️‍⚧️ Trans), using the same simple URL-prefix scheme on both sites:
+
+| Category | Prefix (XHamster and XVideos) |
+|---|---|
+| ❤️ Straight | *(none)* |
+| 🏳️‍🌈 Gay | `/gay` |
+| 🏳️‍⚧️ Trans | `/shemale` |
+
+- **XHamster**: both Home (`{prefix}?page=N`) and Search (`{prefix}/search/{query}?page=N`) use the same embedded JSON blob (`window.initials`) — Search keeps items in `searchResult.videoThumbProps`, Home in `layoutPage.videoListProps.videoThumbProps`. `_scrape_xhamster` tries both paths.
+- **XVideos**: Search (`{prefix}/?k=...&p=N`) paginates normally, but **Home doesn't paginate** — `{prefix}/` always returns the same featured set regardless of `page`/`p` (confirmed by testing directly over HTTP, outside the app). Because of this, XVideos Home always reports `has_more=false` — no "load more" — and the UI shows a notice about it.
+- Sorting (Search only): relevance, newest, views, top rated, longest
+- Duration filter (client-side): short (<10 min), medium (10–30 min), long (>30 min)
+
+### xFree — Selenium (home and search)
+Scrapes xfree.com (Vue.js/Nuxt SSR) via headless Chrome, for both Home and Search.
+
+- **Why Selenium for everything**: neither xfree.com's Home nor its Search paginate reliably over plain HTTP — content loads via client-side infinite scroll, calling an internal JSON endpoint (`/api/2/search?...&offset=N`) protected by Cloudflare that blocks direct HTTP requests (404). The Gay/Trans categories (`/gay`, `/trans`) are additionally blocked by a bot-specific Cloudflare challenge that only a real browser can pass. So everything — Home and Search, across all 4 categories — opens a headless Chrome session (`_XF_SS`, analogous to X's `_SS`) and simulates scrolling (`_xf_scroll_down`) until it accumulates `page_size` new items, with ID-based dedup (`seen_ids`).
+- **Category (Straight / Gay / Trans / All)**: the category is Vuex state on the site (not a query param), set by actually navigating to its dedicated route — `/`, `/gay`, `/trans`, `/all`. So the session always starts with `driver.get()` on the chosen category's route; for search, the query is typed into the page's own search box (`input[name=q]`) and submitted with Enter, preserving the already-loaded category state (navigating straight to a `/search?q=...` URL resets that state back to "Straight").
+- Video links carry a category-specific suffix — `/video?id=` (straight/all), `/video-gay?id=`, `/video-trans?id=` — preserved by the parser (`_parse_xfree_blocks`) to keep the playback URL correct.
+- No server-side sort support (sorting is client-side in Vue.js)
+
+### Pornhub (pt.pornhub.com) — via HTTP
+Direct HTML page scraping, no headless browser (`_scrape_pornhub`). Two tabs — Home and Search — plus an orientation category:
+
+| Category | Site vertical (Home) | Keyword search |
+|---|---|---|
+| ❤️ Straight | `/` | `/video/search?search=...` |
+| 🏳️‍🌈 Gay | `/gayporn` | `/gay/video/search?search=...` |
+| 🏳️‍🌈 Sapphic | `/lesbian` | `/lesbian/video/search?search=...` |
+| 🏳️‍⚧️ Trans | `/transgender` | **no dedicated endpoint** |
+
+- **Home** doesn't require a query — it loads the featured videos for the selected category's vertical (the same URL used as Trans's search fallback).
+- Gay and Sapphic are the site's own "verticals" (same domain, SSR HTML already filtered by orientation) with a dedicated search endpoint — they work over plain HTTP, no blocking.
+- Trans has no keyword-search endpoint on the site — the category browses `/transgender`'s featured feed for both Home and Search, and **ignores the typed text** in Search, warning the user in the UI (an info message when "Trans" is selected).
+- Pagination via `?page=N`, the same for every category and for Home/Search.
+- **Cross-page dedup**: Pornhub's category pagination repeats a few promoted items across consecutive pages (confirmed directly over HTTP, outside the app). Because of this, `_SITE_SS` (also used by XHamster/XVideos) gained a `seen_ids` set that filters out already-seen IDs before returning each page.
+- **Thumbnail**: Home/trending cards use a different attribute (`data-mediumthumb`) than search cards (`data-image`) — `_scrape_pornhub` tries both before falling back to the `<img>`'s plain `src`, otherwise several previews would show up blank on Home.
+
+---
+
+## REST API
+
+| Method | Route | Description |
+|---|---|---|
+| GET | `/api/health` | Health check |
+| POST | `/api/auth/app-login` | App login (configured username/password) |
+| POST | `/api/auth/app-logout` | App logout |
+| GET | `/api/auth/app-status` | App login session state |
+| GET | `/api/session` | Current session state (requires app login) |
+| POST | `/api/auth/auto-import` | Import cookies from the browser |
+| POST | `/api/auth/yt-dlp-browser` | Import cookies via yt-dlp |
+| POST | `/api/auth/paste-cookies` | Import pasted cookies |
+| POST | `/api/auth/validate` | Validate active cookies |
+| POST | `/api/upload/init` | Start chunked upload (Twitter INIT) |
+| POST | `/api/upload/chunk` | Send a 5 MB segment (Twitter APPEND) |
+| POST | `/api/upload/finalize` | Finalize upload and wait for processing |
+| POST | `/api/tweet/create` | Publish a tweet with text and/or video |
+| POST | `/api/auth/logout` | End session and delete cookies |
+| POST | `/api/search` | Search videos (first page) |
+| POST | `/api/search/more` | Load next page |
+| POST | `/api/preview` | Direct URL for in-browser preview |
+| POST | `/api/formats` | List available formats (yt-dlp) |
+| POST | `/api/download/start` | Start an async download |
+| GET | `/api/download/progress/<tid>` | Download progress |
+| GET | `/api/download/file/<tid>` | Serve the downloaded file |
+| GET | `/api/library` | List videos in the downloads folder |
+| GET | `/api/library/video/<name>` | Serve a library video (streaming) |
+| POST | `/api/library/delete` | Delete a video from the library |
+
+---
+
+## Frontend (React SPA)
+
+The entire interface lives in `index.html` as inline JSX compiled by Babel in the browser — no `npm build`. Main components:
+
+| Component | Purpose |
+|---|---|
+| `Root` | App login gate — decides between `AppLoginScreen` and `App` |
+| `AppLoginScreen` | App login screen (configured username/password) |
+| `AuthScreen` | Login screen with the 3 X cookie-import tabs |
+| `VideoCard` | Result card with embedded preview and selection checkbox |
+| `FormatModal` | Quality selection and download progress modal |
+| `BulkActionBar` | Fixed bulk-download bar (multi-selection) |
+| `BulkProgressModal` | Modal with simultaneous progress for several downloads |
+| `BgTray` | Floating pill for background downloads |
+| `PostModal` | Modal for composing and publishing a tweet with video (chunked upload with real progress) |
+| `LibraryGrid` | Grid of downloaded videos |
+| `PlayerModal` | Fullscreen player with seek, play/pause, next/previous, delete |
+
+---
+
+## Video Download
+
+- **Single download**: pick a specific format (quality, codec, estimated size) via yt-dlp
+- **Batch download**: starts all of them in parallel, shows individual progress
+- **Background**: closing the modal during a download lets the task keep running, shown in the `BgTray`
+- **Survives closing the browser**: the download runs in a `threading.Thread` on the server process (`download_task` in `app.py`), fully decoupled from the HTTP connection — closing the tab/browser doesn't interrupt it. What was missing was the *frontend* remembering which tasks were in progress: `bgRef`/`bgTasks` are now mirrored to `localStorage` (`scrapperx_bg_tasks`) on every progress update, and a `useEffect` on `App`'s mount reads that list back and resumes polling — reopening the browser reconnects to the real progress. If the *server* restarts mid-download (not just the browser), the in-memory progress (`download_progress`) is lost; the UI detects this (a `not_found` response) and marks the task as an error instead of polling forever.
+- Supported formats: `best`, up to 1080p, up to 720p, up to 480p
+- Output: `~/Downloads/X-Videos/<title>_<id>.mp4`
+
+### Pornhub needs TLS impersonation
+yt-dlp's native Pornhub extractor gets `403 Forbidden` when downloading the video page — it's a TLS *fingerprint* block (JA3/JA4), not an HTTP-header block (confirmed: the same headers via plain `requests` work fine; only yt-dlp's network stack gets blocked). The fix is making yt-dlp mimic a real Chrome TLS handshake via `curl_cffi`:
+- `setup.sh` installs `curl_cffi` (pinned to `>=0.10,<0.15` — v0.15 breaks the API that yt-dlp `2026.03.17` expects)
+- `build_ydl_opts(extra, url)` detects `pornhub.com` URLs and injects `impersonate=ImpersonateTarget.from_str("chrome")` (yt-dlp's Python API requires the `ImpersonateTarget` object, unlike the CLI's `--impersonate chrome` which accepts a plain string)
+- Applies to `/api/formats`, `/api/download/start` and `/api/preview`
+
+---
+
+## Selenium Session Flow
+
+```
+POST /api/search
+  └─ _ss_close()           # closes any previous session
+  └─ _ss_driver()          # creates headless Chrome
+  └─ _ss_inject_cookies()  # injects cookies via CDP
+  └─ navigates to the URL
+  └─ _ss_fetch_page()      # parses visible articles, scrolls if needed
+  └─ stores the driver in _SS{}
+
+POST /api/search/more
+  └─ checks _SS["id"] and timeout
+  └─ _ss_fetch_page()      # continues where it left off
+```
+
+xFree's Home and Search use the same session pattern (no cookies, no X involved):
+
+```
+POST /api/search  (platform=xfree, category=straight|gay|trans|all)
+  └─ _xf_close()           # closes any previous session
+  └─ _ss_driver()          # creates headless Chrome (reused from X)
+  └─ navigates to /, /gay, /trans or /all      # sets the category (Vuex state)
+  └─ if there's a query: types it into the page's own input[name=q] and presses Enter
+  └─ _xf_fetch_page()      # parses visible wall__item cards, scrolls if needed
+  └─ stores the driver in _XF_SS{}
+
+POST /api/search/more
+  └─ checks _XF_SS["id"] and timeout
+  └─ _xf_fetch_page()      # continues where it left off
+```
+
+The session is closed automatically via `atexit` when the server stops.
+
+### Robust cleanup of stuck processes (`_hard_kill_driver`)
+
+When a session's Chrome/chromedriver crashes on its own (`tab crashed`, `Connection refused` in `_ss_fetch_page`/`_xf_fetch_page`), `driver.quit()` doesn't help — it needs a working WebDriver connection to ask Chrome to close, and that's exactly the connection that's broken. Left untreated, the entire process tree (chromedriver + Chrome + zygote/gpu/renderer) is orphaned and keeps running forever — **~1-1.5 GB of RAM per stuck session** (a ~15h-old orphaned session was found consuming server memory to the point of nearly exhausting swap).
+
+`_ss_close()`/`_xf_close()` now call `_hard_kill_driver()`, which:
+1. Tries `driver.quit()` normally (best effort)
+2. Kills the chromedriver process directly by PID (`drv.service.process.pid`)
+3. Scans **every** process on the system for that session's unique `--user-data-dir` (tagged onto `drv._user_data_dir` at creation, in `_ss_driver()`) and kills any process whose cmdline contains that path
+
+Step 3 exists because a parent→child walk (`psutil.Process(pid).children()`) **doesn't work** once chromedriver is already dead: its children get reparented away immediately (out of the dead chromedriver's tree), so asking "what are this PID's children" after the crash finds nothing — confirmed by simulating the crash and testing it (0 of 9 orphaned processes killed via the walk; 9 of 9 killed via the `--user-data-dir` scan). It doesn't use `killpg` — chromedriver shares Gunicorn's own process group, and killing the group would take the server down with it.

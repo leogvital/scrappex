@@ -1,5 +1,7 @@
 # X Video Scraper
 
+*[Read in English](README.en.md)*
+
 Aplicação web local para buscar e baixar vídeos do **X (Twitter)**, **XHamster**, **XVideos**, **xFree** e **Pornhub**.
 
 > Veja o [ROADMAP.md](ROADMAP.md) para o que já foi feito e os próximos passos planejados.
