@@ -372,6 +372,14 @@ This box is the user's own desktop, not a dedicated server — VSCode, a persona
 
 A flat 2s backoff still wasn't enough for a longer dip: production logs later showed three separate searches (X, X again, xFree) all exhausting 3 attempts within a ~40s window before recovering on their own, and a personal Chrome tab was found pinning ~32% CPU continuously for 3.6h in the background — real, sustained contention, not a one-off blip. The backoff is now escalating (3s → 6s → 9s between attempts) and `_BROWSER_RETRY_ATTEMPTS` went from 3 to 4, giving up to ~25-30s of total retry window to ride out a longer dip before giving up.
 
+### Self-heal: worker restart after retries are fully exhausted
+
+Even with 4 escalating attempts, sustained contention can still exhaust all of them — at that point `_self_heal_restart()` does one more thing beyond just surfacing the error: it sends `SIGTERM` to the worker process itself (`os.kill(os.getpid(), signal.SIGTERM)`). This is exactly the mechanism gunicorn's own `--max-requests` worker recycling uses internally, so it's standard, well-supported behavior, not a hack — the worker finishes any in-flight response, exits, and gunicorn's arbiter (a separate, always-alive process — confirmed via `ps`: arbiter and worker are parent/child) immediately spawns a fresh one to replace it. The app runs under a `systemd` unit (`Type=simple`, `Restart=always`) that tracks the *arbiter's* PID via `start.sh`'s `exec gunicorn ...`, not the worker's — so this is fully transparent to systemd, which never even notices a worker-level restart happened.
+
+Skipped entirely if a download is in progress (`download_progress` has any entry with `status == "downloading"`) — `download_task()` runs as a background thread inside this same worker process and would be killed along with it. Before restarting, it also runs `_ss_close()`, `_xf_close()`, and `_watchdog_sweep()` for a best-effort cleanup of any tracked session or orphaned chromedriver.
+
+**Important caveat**: this does not fix the actual root cause of contention-driven crashes (e.g. another process on the host hogging CPU) — restarting scrapperx's own worker has no effect on an unrelated Chrome tab or VSCode process. It only guarantees scrapperx's own internal state gets a clean slate faster than the watchdog sweep (up to 120s later) would, right after a crash pattern strong enough to exhaust every retry. Validated by monkeypatching `os.kill` and toggling `download_progress`: confirmed the restart is skipped while a download is active, and proceeds (calling `os.kill` with `SIGTERM`) when none is.
+
 ### Background watchdog for sessions the reactive cleanup can't reach
 
 Retry and `_hard_kill_driver` both only run when a request handler actually notices something's wrong — neither helps if no new request ever comes in for the dead session. Two real gaps:

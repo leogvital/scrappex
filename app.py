@@ -1,6 +1,6 @@
 from flask import Flask, jsonify, request, send_file, session
 from flask_cors import CORS
-import yt_dlp, os, json, threading, uuid, tempfile, sqlite3, shutil, glob, time, secrets, psutil
+import yt_dlp, os, json, threading, uuid, tempfile, sqlite3, shutil, glob, time, secrets, psutil, signal
 from pathlib import Path
 from datetime import timedelta
 from http.cookiejar import MozillaCookieJar
@@ -2079,6 +2079,8 @@ def search():
                     time.sleep(delay)
                     continue
                 break
+        if _is_transient_browser_error(last_err):
+            _self_heal_restart(f"xfree esgotou {_BROWSER_RETRY_ATTEMPTS} tentativas: {last_err}")
         return jsonify({"error": f"Erro no navegador: {last_err}", "results": [], "has_more": False}), 500
 
     # ── External sites (XHamster, XVideos, Pornhub) ───────────────────────────
@@ -2184,6 +2186,8 @@ def search():
                 time.sleep(delay)
                 continue
             break
+    if _is_transient_browser_error(last_err):
+        _self_heal_restart(f"X esgotou {_BROWSER_RETRY_ATTEMPTS} tentativas: {last_err}")
     return jsonify({"error": f"Erro no navegador: {last_err}", "results": [], "has_more": False}), 500
 
 
@@ -2237,6 +2241,8 @@ def search_more():
                 })
             except Exception as e2:
                 _xf_close()
+                if _is_transient_browser_error(e2):
+                    _self_heal_restart(f"xfree falhou ao retomar 'carregar mais': {e2}")
                 return jsonify({"error": f"Erro ao carregar mais: {e2}",
                                 "results": [], "has_more": False}), 500
 
@@ -2314,6 +2320,8 @@ def search_more():
             })
         except Exception as e2:
             _ss_close()
+            if _is_transient_browser_error(e2):
+                _self_heal_restart(f"X falhou ao retomar 'carregar mais': {e2}")
             return jsonify({"error": f"Erro ao carregar mais: {e2}",
                             "results": [], "has_more": False}), 500
 
@@ -2597,6 +2605,35 @@ if os.path.exists(COOKIES_FILE):
         session_state["logged_in"] = ok
     except Exception as ex:
         print(f"Startup cookie validation failed: {ex}")
+
+
+# ── Self-heal: worker restart after browser-crash retries are fully exhausted ─
+# Retry+backoff (_BROWSER_RETRY_ATTEMPTS) already recovers from a single crashed
+# Chrome tab. If ALL attempts fail, that's a stronger signal — e.g. sustained
+# CPU/memory contention on the host — so this does one more thing beyond just
+# surfacing the error: cleans up any tracked session and asks gunicorn's own
+# arbiter to respawn this worker (SIGTERM is exactly what --max-requests worker
+# recycling uses internally, so this is standard gunicorn behavior, not a hack).
+# Skipped entirely if a download is running — download_task() runs as a
+# background thread inside this same worker process and would be killed with
+# it. This does NOT fix external contention (e.g. another Chrome tab hogging
+# CPU) — it only guarantees scrapperx's own state gets a clean slate faster
+# than the watchdog sweep (up to 120s later) would.
+def _self_heal_restart(reason):
+    def _do():
+        time.sleep(3)  # let the just-returned HTTP response finish flushing
+        if any(t.get("status") == "downloading" for t in download_progress.values()):
+            print(f"  Self-heal: pulado (download em andamento) — motivo: {reason}")
+            return
+        print(f"  Self-heal: reiniciando o worker — motivo: {reason}")
+        for cleanup in (_ss_close, _xf_close, _watchdog_sweep):
+            try:
+                cleanup()
+            except Exception as e:
+                print(f"  Self-heal: erro em {cleanup.__name__}: {e}")
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=_do, daemon=True, name="scrapperx-self-heal").start()
 
 
 # ── Watchdog: catches what the reactive cleanup paths (_ss_close()/_xf_close()
