@@ -45,6 +45,35 @@ if not APP_PASS:
           "Copie .env.local.example para .env.local e defina uma senha.")
 _APP_LOGIN_WHITELIST = {"/api/auth/app-login", "/api/auth/app-status", "/api/health"}
 
+# ── Rate limiting for /api/auth/app-login ─────────────────────────────────
+# In-memory only — fine for --workers 1 (no cross-process state to share) and
+# a reset on server restart is harmless here (worst case: the counter starts
+# fresh, not a security hole). No reverse proxy sits in front of gunicorn
+# (confirmed via access logs showing real LAN IPs directly), so
+# request.remote_addr is the real client IP, not a spoofable header.
+_LOGIN_ATTEMPTS = {}       # ip -> [timestamp, ...] of recent failed attempts
+_LOGIN_RATE_LIMIT = 5      # max failed attempts...
+_LOGIN_RATE_WINDOW = 300   # ...within this many seconds (5 min)
+
+
+def _login_rate_limited(ip):
+    """
+    Returns seconds until the next attempt is allowed, or 0 if not currently
+    limited. Prunes attempts older than the window as a side effect, so both
+    the per-IP list and the dict itself (once a key's list empties out) stay
+    naturally bounded to "IPs with a failure in the current window" — no
+    separate cleanup job needed.
+    """
+    now = time.time()
+    attempts = [t for t in _LOGIN_ATTEMPTS.get(ip, []) if now - t < _LOGIN_RATE_WINDOW]
+    if attempts:
+        _LOGIN_ATTEMPTS[ip] = attempts
+    else:
+        _LOGIN_ATTEMPTS.pop(ip, None)
+    if len(attempts) >= _LOGIN_RATE_LIMIT:
+        return max(0, int(_LOGIN_RATE_WINDOW - (now - attempts[0])) + 1)
+    return 0
+
 
 @app.before_request
 def _require_app_login():
@@ -55,11 +84,19 @@ def _require_app_login():
 
 @app.route("/api/auth/app-login", methods=["POST"])
 def app_login():
+    ip = request.remote_addr or "unknown"
+    retry_after = _login_rate_limited(ip)
+    if retry_after:
+        return jsonify({"success": False,
+                         "error": f"Muitas tentativas — aguarde {retry_after}s antes de tentar de novo."}), 429
+
     d = request.json or {}
     if d.get("username") == APP_USER and d.get("password") == APP_PASS:
+        _LOGIN_ATTEMPTS.pop(ip, None)   # a correct login clears this IP's failure history
         session.permanent = True   # cookie survives closing the browser (30-day lifetime)
         session["app_logged_in"] = True
         return jsonify({"success": True})
+    _LOGIN_ATTEMPTS.setdefault(ip, []).append(time.time())
     return jsonify({"success": False, "error": "Usuário ou senha inválidos."})
 
 

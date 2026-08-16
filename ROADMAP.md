@@ -17,6 +17,7 @@ Status do projeto e próximos passos. Mantido junto com o [README.md](README.md)
 
 ### Conta e sessão
 - Login do app com usuário/senha configuráveis via `.env.local` (fora do repositório — veja `.env.local.example`), sessão persistente — sobrevive a fechar o navegador (cookie de 30 dias) e a reiniciar o servidor (chave secreta salva em disco)
+- Rate limit no `/api/auth/app-login` — 5 tentativas erradas por IP a cada 5 minutos, depois bloqueia (mesmo a senha certa) com uma mensagem de "aguarde Xs"; em memória só (sem Redis — `--workers 1` já não tem estado pra sincronizar entre processos), reseta num restart, mas isso é inofensivo aqui. Um login certo limpa o histórico de falhas daquele IP na hora
 - Login do X (cookies) revalidado automaticamente no boot do servidor
 - Publicação de tweet com vídeo (upload chunked com progresso real)
 - Compatibilidade com Windows (Waitress no lugar do Gunicorn, scripts `.bat` equivalentes aos `.sh`)
@@ -65,9 +66,6 @@ Status do projeto e próximos passos. Mantido junto com o [README.md](README.md)
 
 ### Novas plataformas
 - [ ] Definir com o usuário quais sites entram em seguida (candidatos a levantar: outros agregadores com filtro de orientação, sites com API pública, etc.)
-
-### Segurança / operação
-- [ ] Rate limit no `/api/auth/app-login` (proteção básica contra força bruta, mesmo sendo uso pessoal)
 
 ---
 
