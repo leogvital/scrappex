@@ -8,15 +8,34 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
   <style>
+    /* ── Theme tokens ─────────────────────────────────────────────────
+       Only the neutral palette (backgrounds/borders/text) is themed —
+       accent/semantic colors (blue/red/green/yellow) and the always-dark
+       video player/preview surfaces stay constant across both themes,
+       same as X/Twitter's own light and dark modes. Dark is the default
+       (no attribute needed) so existing users see zero visual change
+       until they opt into light via the toggle. */
+    :root {
+      --bg: #000; --bg-card: #0d1117; --bg-input: #0a0f14;
+      --bg-selected: #0c1825; --bg-hover: #0f1923; --bg-placeholder: #111820;
+      --border: #1e2832; --border-2: #2f3b47;
+      --text: #e7e9ea; --text-2: #71767b; --text-3: #8b98a5;
+    }
+    html[data-theme="light"] {
+      --bg: #eff3f4; --bg-card: #fff; --bg-input: #f7f9fa;
+      --bg-selected: #e8f5fe; --bg-hover: #eff8fe; --bg-placeholder: #e8ecee;
+      --border: #dde3e6; --border-2: #c7d0d4;
+      --text: #0f1419; --text-2: #55636c; --text-3: #33414a;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { background: #000; overflow-x: hidden; max-width: 100%; }
+    html, body { background: var(--bg); overflow-x: hidden; max-width: 100%; }
     ::-webkit-scrollbar { width: 5px; }
-    ::-webkit-scrollbar-track { background: #0d1117; }
-    ::-webkit-scrollbar-thumb { background: #2f3b47; border-radius: 3px; }
+    ::-webkit-scrollbar-track { background: var(--bg-card); }
+    ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes fadeIn { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
     input, textarea { outline: none; }
-    .vcard:hover { transform: translateY(-2px) !important; border-color: #2f3b47 !important; box-shadow: 0 8px 24px rgba(0,0,0,.4) !important; }
+    .vcard:hover { transform: translateY(-2px) !important; border-color: var(--border-2) !important; box-shadow: 0 8px 24px rgba(0,0,0,.4) !important; }
 
     /* ── Responsive (mobile) ─────────────────────────────────────────── */
     @media (max-width: 640px) {
@@ -35,6 +54,14 @@
 </head>
 <body>
   <div id="root"></div>
+  <script>
+    // Applied before React mounts, so a light-theme user doesn't see a flash of dark on load.
+    try {
+      if (localStorage.getItem("scrapperx_theme") === "light") {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    } catch (e) {}
+  </script>
 
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
@@ -60,6 +87,8 @@
     const SkipForwardI = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><polygon points="5 4 15 12 5 20 5 4"/><rect x="17" y="4" width="2" height="16"/></svg>;
     const ClockI = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg>;
     const StarI = ({filled=false,size=15}) => <svg width={size} height={size} viewBox="0 0 24 24" fill={filled?"#f9c22e":"none"} stroke={filled?"#f9c22e":"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>;
+    const SunI  = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>;
+    const MoonI = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>;
 
     const fmt  = s => { if (!s) return "—"; const m=Math.floor(s/60),sc=Math.floor(s%60); return m+":"+sc.toString().padStart(2,"0"); };
     const fmtV = n => { if (!n) return ""; if (n>=1e6) return (n/1e6).toFixed(1)+"M"; if (n>=1e3) return (n/1e3).toFixed(1)+"K"; return n; };
@@ -103,22 +132,22 @@
       const tStyle = t => ({
         flex:1,padding:"9px 6px",borderRadius:8,border:"none",
         background:tab===t?"rgba(29,155,240,.15)":"transparent",
-        color:tab===t?"#1d9bf0":"#71767b",
+        color:tab===t?"#1d9bf0":"var(--text-2)",
         fontSize:12,fontWeight:tab===t?700:400,cursor:"pointer",transition:"all .15s",
         outline:tab===t?"1px solid rgba(29,155,240,.3)":"none",
       });
 
       return (
-        <div style={{minHeight:"100vh",background:"#000",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div style={{minHeight:"100vh",background:"var(--bg)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <div style={{width:"100%",maxWidth:480}}>
             <div style={{textAlign:"center",marginBottom:30}}>
-              <div style={{color:"#e7e9ea",display:"inline-flex",marginBottom:12}}><XI/></div>
-              <h1 style={{fontSize:26,fontWeight:900,color:"#e7e9ea",letterSpacing:"-0.5px",marginBottom:6}}>X Video Scraper</h1>
-              <p style={{fontSize:13,color:"#71767b",lineHeight:1.5}}>Conecte sua conta do X para buscar e baixar vídeos</p>
+              <div style={{color:"var(--text)",display:"inline-flex",marginBottom:12}}><XI/></div>
+              <h1 style={{fontSize:26,fontWeight:900,color:"var(--text)",letterSpacing:"-0.5px",marginBottom:6}}>X Video Scraper</h1>
+              <p style={{fontSize:13,color:"var(--text-2)",lineHeight:1.5}}>Conecte sua conta do X para buscar e baixar vídeos</p>
             </div>
 
-            <div style={{background:"#0d1117",border:"1px solid #1e2832",borderRadius:16,overflow:"hidden",boxShadow:"0 16px 48px rgba(0,0,0,.5)"}}>
-              <div style={{display:"flex",gap:4,padding:6,background:"#0a0f14",borderBottom:"1px solid #1e2832"}}>
+            <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:16,overflow:"hidden",boxShadow:"0 16px 48px rgba(0,0,0,.5)"}}>
+              <div style={{display:"flex",gap:4,padding:6,background:"var(--bg-input)",borderBottom:"1px solid var(--border)"}}>
                 <button style={tStyle("auto")}  onClick={()=>setTab("auto")}>🤖 Auto-detecção</button>
                 <button style={tStyle("ytdlp")} onClick={()=>setTab("ytdlp")}>⚙️ Via yt-dlp</button>
                 <button style={tStyle("paste")} onClick={()=>setTab("paste")}>📋 Colar cookies</button>
@@ -133,18 +162,18 @@
 
                 {tab==="auto" && (
                   <div>
-                    <p style={{fontSize:13,color:"#71767b",marginBottom:18,lineHeight:1.6}}>
-                      Importa os cookies direto do navegador instalado. Você precisa estar <strong style={{color:"#e7e9ea"}}>logado no X</strong> nesse navegador.
+                    <p style={{fontSize:13,color:"var(--text-2)",marginBottom:18,lineHeight:1.6}}>
+                      Importa os cookies direto do navegador instalado. Você precisa estar <strong style={{color:"var(--text)"}}>logado no X</strong> nesse navegador.
                     </p>
                     <div style={{display:"flex",flexDirection:"column",gap:10}}>
                       {["Chrome","Firefox","Edge"].map(b=>(
                         <button key={b} onClick={()=>doImport("/auth/auto-import",{browser:b.toLowerCase()})} disabled={loading}
-                          style={{padding:"12px 16px",borderRadius:10,border:"1px solid #1e2832",background:"#0a0f14",color:"#e7e9ea",fontSize:14,fontWeight:500,cursor:loading?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:10,opacity:loading?.6:1,transition:"all .15s",textAlign:"left"}}>
+                          style={{padding:"12px 16px",borderRadius:10,border:"1px solid var(--border)",background:"var(--bg-input)",color:"var(--text)",fontSize:14,fontWeight:500,cursor:loading?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:10,opacity:loading?.6:1,transition:"all .15s",textAlign:"left"}}>
                           {b==="Chrome"?"🟡":b==="Firefox"?"🟠":"🔵"} Importar do {b}
                         </button>
                       ))}
                     </div>
-                    <div style={{marginTop:16,padding:"12px 14px",background:"rgba(255,212,0,.05)",border:"1px solid rgba(255,212,0,.15)",borderRadius:8,fontSize:12,color:"#71767b",lineHeight:1.6}}>
+                    <div style={{marginTop:16,padding:"12px 14px",background:"rgba(255,212,0,.05)",border:"1px solid rgba(255,212,0,.15)",borderRadius:8,fontSize:12,color:"var(--text-2)",lineHeight:1.6}}>
                       ℹ️ Melhor resultado com <strong style={{color:"#ffd400"}}>Firefox</strong> no Linux (sem criptografia). Chrome pode precisar do método "yt-dlp".
                     </div>
                   </div>
@@ -152,22 +181,22 @@
 
                 {tab==="ytdlp" && (
                   <div>
-                    <p style={{fontSize:13,color:"#71767b",marginBottom:16,lineHeight:1.6}}>
-                      O <strong style={{color:"#e7e9ea"}}>yt-dlp</strong> extrai cookies diretamente do perfil. Escolha o navegador onde está logado no X:
+                    <p style={{fontSize:13,color:"var(--text-2)",marginBottom:16,lineHeight:1.6}}>
+                      O <strong style={{color:"var(--text)"}}>yt-dlp</strong> extrai cookies diretamente do perfil. Escolha o navegador onde está logado no X:
                     </p>
                     <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:18}}>
                       {BROWSERS.map(b=>(
                         <button key={b.id} onClick={()=>setBrowser(b.id)}
-                          style={{padding:"8px 14px",borderRadius:9999,border:"1px solid "+(browser===b.id?"#1d9bf0":"#1e2832"),background:browser===b.id?"rgba(29,155,240,.12)":"transparent",color:browser===b.id?"#1d9bf0":"#71767b",fontSize:13,fontWeight:browser===b.id?600:400,cursor:"pointer",transition:"all .15s",display:"flex",alignItems:"center",gap:6}}>
+                          style={{padding:"8px 14px",borderRadius:9999,border:"1px solid "+(browser===b.id?"#1d9bf0":"var(--border)"),background:browser===b.id?"rgba(29,155,240,.12)":"transparent",color:browser===b.id?"#1d9bf0":"var(--text-2)",fontSize:13,fontWeight:browser===b.id?600:400,cursor:"pointer",transition:"all .15s",display:"flex",alignItems:"center",gap:6}}>
                           {b.emoji} {b.label}
                         </button>
                       ))}
                     </div>
                     <button onClick={()=>doImport("/auth/yt-dlp-browser",{browser})} disabled={loading}
-                      style={{width:"100%",padding:"12px 0",borderRadius:9999,border:"none",background:loading?"#1e2832":"#1d9bf0",color:loading?"#71767b":"#fff",fontSize:14,fontWeight:700,cursor:loading?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+                      style={{width:"100%",padding:"12px 0",borderRadius:9999,border:"none",background:loading?"var(--border)":"#1d9bf0",color:loading?"var(--text-2)":"#fff",fontSize:14,fontWeight:700,cursor:loading?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
                       {loading?<><Spin size={16} color="#fff"/>Extraindo...</>:"Extrair cookies do "+BROWSERS.find(b=>b.id===browser)?.label}
                     </button>
-                    <div style={{marginTop:14,padding:"10px 13px",background:"#0a0f14",borderRadius:8,border:"1px solid #1e2832",fontSize:12,color:"#71767b",lineHeight:1.6}}>
+                    <div style={{marginTop:14,padding:"10px 13px",background:"var(--bg-input)",borderRadius:8,border:"1px solid var(--border)",fontSize:12,color:"var(--text-2)",lineHeight:1.6}}>
                       💡 Feche o {BROWSERS.find(b=>b.id===browser)?.label} antes de extrair.
                     </div>
                   </div>
@@ -175,7 +204,7 @@
 
                 {tab==="paste" && (
                   <div>
-                    <p style={{fontSize:13,color:"#71767b",marginBottom:12,lineHeight:1.6}}>
+                    <p style={{fontSize:13,color:"var(--text-2)",marginBottom:12,lineHeight:1.6}}>
                       Use a extensão <a href={EXT} target="_blank" rel="noreferrer" style={{color:"#1d9bf0",textDecoration:"none"}}>Cookie-Editor</a> para exportar os cookies do x.com em JSON e cole aqui.
                     </p>
                     <div style={{marginBottom:14,display:"flex",flexDirection:"column",gap:8}}>
@@ -187,22 +216,22 @@
                       ].map(s=>(
                         <div key={s.n} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
                           <div style={{width:22,height:22,borderRadius:"50%",background:"rgba(29,155,240,.15)",border:"1px solid rgba(29,155,240,.3)",color:"#1d9bf0",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{s.n}</div>
-                          <span style={{fontSize:12,color:"#71767b",lineHeight:1.5,paddingTop:3}}>{s.t}</span>
+                          <span style={{fontSize:12,color:"var(--text-2)",lineHeight:1.5,paddingTop:3}}>{s.t}</span>
                         </div>
                       ))}
                     </div>
                     <textarea value={pasteText} onChange={e=>setPaste(e.target.value)} placeholder="Cole o JSON dos cookies aqui..." rows={6}
-                      style={{width:"100%",padding:"12px 14px",background:"#0a0f14",border:"1px solid #1e2832",borderRadius:10,color:"#e7e9ea",fontSize:12,fontFamily:"monospace",resize:"vertical",marginBottom:12,lineHeight:1.5,outline:"none"}}
-                      onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="#1e2832"}/>
+                      style={{width:"100%",padding:"12px 14px",background:"var(--bg-input)",border:"1px solid var(--border)",borderRadius:10,color:"var(--text)",fontSize:12,fontFamily:"monospace",resize:"vertical",marginBottom:12,lineHeight:1.5,outline:"none"}}
+                      onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="var(--border)"}/>
                     <button onClick={()=>doImport("/auth/paste-cookies",{cookies:pasteText})} disabled={loading||!pasteText.trim()}
-                      style={{width:"100%",padding:"12px 0",borderRadius:9999,border:"none",background:loading||!pasteText.trim()?"#1e2832":"#1d9bf0",color:loading||!pasteText.trim()?"#71767b":"#fff",fontSize:14,fontWeight:700,cursor:loading||!pasteText.trim()?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+                      style={{width:"100%",padding:"12px 0",borderRadius:9999,border:"none",background:loading||!pasteText.trim()?"var(--border)":"#1d9bf0",color:loading||!pasteText.trim()?"var(--text-2)":"#fff",fontSize:14,fontWeight:700,cursor:loading||!pasteText.trim()?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
                       {loading?<><Spin size={16} color="#fff"/>Importando...</>:"Importar Cookies"}
                     </button>
                   </div>
                 )}
               </div>
             </div>
-            <p style={{textAlign:"center",fontSize:11,color:"#2f3b47",marginTop:16}}>🔒 Cookies armazenados apenas localmente · Nunca enviados a servidores externos</p>
+            <p style={{textAlign:"center",fontSize:11,color:"var(--border-2)",marginTop:16}}>🔒 Cookies armazenados apenas localmente · Nunca enviados a servidores externos</p>
           </div>
         </div>
       );
@@ -228,30 +257,30 @@
         setLoading(false);
       }
 
-      const fieldStyle = {width:"100%",padding:"11px 14px",background:"#0a0f14",border:"1px solid #1e2832",borderRadius:10,color:"#e7e9ea",fontSize:14,marginBottom:16};
+      const fieldStyle = {width:"100%",padding:"11px 14px",background:"var(--bg-input)",border:"1px solid var(--border)",borderRadius:10,color:"var(--text)",fontSize:14,marginBottom:16};
 
       return (
-        <div style={{minHeight:"100vh",background:"#000",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div style={{minHeight:"100vh",background:"var(--bg)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <form onSubmit={submit} style={{width:"100%",maxWidth:360}}>
             <div style={{textAlign:"center",marginBottom:30}}>
-              <div style={{color:"#e7e9ea",display:"inline-flex",marginBottom:12}}><XI/></div>
-              <h1 style={{fontSize:24,fontWeight:900,color:"#e7e9ea",letterSpacing:"-0.5px",marginBottom:6}}>X Video Scraper</h1>
-              <p style={{fontSize:13,color:"#71767b"}}>Faça login para acessar</p>
+              <div style={{color:"var(--text)",display:"inline-flex",marginBottom:12}}><XI/></div>
+              <h1 style={{fontSize:24,fontWeight:900,color:"var(--text)",letterSpacing:"-0.5px",marginBottom:6}}>X Video Scraper</h1>
+              <p style={{fontSize:13,color:"var(--text-2)"}}>Faça login para acessar</p>
             </div>
-            <div style={{background:"#0d1117",border:"1px solid #1e2832",borderRadius:16,padding:22,boxShadow:"0 16px 48px rgba(0,0,0,.5)"}}>
+            <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:16,padding:22,boxShadow:"0 16px 48px rgba(0,0,0,.5)"}}>
               {err && (
                 <div style={{background:"rgba(244,33,46,.08)",border:"1px solid rgba(244,33,46,.3)",borderRadius:8,padding:"10px 14px",color:"#f4212e",fontSize:13,marginBottom:16,lineHeight:1.5}}>
                   ✗ {err}
                 </div>
               )}
-              <label style={{display:"block",fontSize:12,color:"#71767b",marginBottom:6}}>Usuário</label>
+              <label style={{display:"block",fontSize:12,color:"var(--text-2)",marginBottom:6}}>Usuário</label>
               <input value={username} onChange={e=>setUsername(e.target.value)} autoFocus style={fieldStyle}
-                onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="#1e2832"}/>
-              <label style={{display:"block",fontSize:12,color:"#71767b",marginBottom:6}}>Senha</label>
+                onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="var(--border)"}/>
+              <label style={{display:"block",fontSize:12,color:"var(--text-2)",marginBottom:6}}>Senha</label>
               <input type="password" value={password} onChange={e=>setPassword(e.target.value)} style={{...fieldStyle,marginBottom:20}}
-                onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="#1e2832"}/>
+                onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="var(--border)"}/>
               <button type="submit" disabled={loading||!username.trim()||!password}
-                style={{width:"100%",padding:"12px 0",borderRadius:9999,border:"none",background:loading||!username.trim()||!password?"#1e2832":"#1d9bf0",color:loading||!username.trim()||!password?"#71767b":"#fff",fontSize:14,fontWeight:700,cursor:loading||!username.trim()||!password?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+                style={{width:"100%",padding:"12px 0",borderRadius:9999,border:"none",background:loading||!username.trim()||!password?"var(--border)":"#1d9bf0",color:loading||!username.trim()||!password?"var(--text-2)":"#fff",fontSize:14,fontWeight:700,cursor:loading||!username.trim()||!password?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
                 {loading?<><Spin size={16} color="#fff"/>Entrando...</>:"Entrar"}
               </button>
             </div>
@@ -263,24 +292,34 @@
     // ── Root (app-login gate, wraps the main App) ───────────────────────────
     function Root() {
       const [appAuth, setAppAuth] = useState(null);
+      // Lifted above App so the theme also applies to the login/loading screens
+      // rendered before App ever mounts, not just the main app UI.
+      const [theme, setTheme] = useState(()=>{
+        try { return localStorage.getItem("scrapperx_theme") || "dark"; } catch { return "dark"; }
+      });
 
       useEffect(()=>{
         fetch(API+"/auth/app-status").then(r=>r.json()).then(d=>setAppAuth(!!d.logged_in)).catch(()=>setAppAuth(false));
       },[]);
+
+      useEffect(()=>{
+        document.documentElement.setAttribute("data-theme", theme);
+        try { localStorage.setItem("scrapperx_theme", theme); } catch {}
+      },[theme]);
 
       async function appLogout() {
         await fetch(API+"/auth/app-logout",{method:"POST"});
         setAppAuth(false);
       }
 
-      if (appAuth===null) return <div style={{minHeight:"100vh",background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}><Spin size={36}/></div>;
+      if (appAuth===null) return <div style={{minHeight:"100vh",background:"var(--bg)",display:"flex",alignItems:"center",justifyContent:"center"}}><Spin size={36}/></div>;
       if (!appAuth) return <AppLoginScreen onSuccess={()=>setAppAuth(true)}/>;
 
       return (
         <>
-          <App/>
+          <App theme={theme} onToggleTheme={()=>setTheme(t=>t==="dark"?"light":"dark")}/>
           <button onClick={appLogout} title="Encerrar sessão do app"
-            style={{position:"fixed",bottom:14,left:14,zIndex:9999,background:"rgba(0,0,0,.6)",border:"1px solid #2f3b47",borderRadius:9999,color:"#71767b",fontSize:11,padding:"5px 10px",cursor:"pointer"}}>
+            style={{position:"fixed",bottom:14,left:14,zIndex:9999,background:"rgba(0,0,0,.6)",border:"1px solid var(--border-2)",borderRadius:9999,color:"var(--text-2)",fontSize:11,padding:"5px 10px",cursor:"pointer"}}>
             🔒 Sair
           </button>
         </>
@@ -327,8 +366,8 @@
       const hasVideo  = !!pv?.url;
       const hasError  = !!pv?.error;
 
-      const borderColor = isChecked ? "#1d9bf0" : selected ? "#1d9bf0" : "#1e2832";
-      const bgColor     = isChecked ? "#0c1825" : selected ? "#0f1923" : "#0a0f14";
+      const borderColor = isChecked ? "#1d9bf0" : selected ? "#1d9bf0" : "var(--border)";
+      const bgColor     = isChecked ? "var(--bg-selected)" : selected ? "var(--bg-hover)" : "var(--bg-input)";
 
       return (
         <div className="vcard" style={{background:bgColor,border:"2px solid "+borderColor,
@@ -340,7 +379,7 @@
             onClick={handlePlay}
             onMouseEnter={()=>setHov(true)}
             onMouseLeave={()=>setHov(false)}
-            style={{position:"relative",paddingTop:"56.25%",background:"#0d1117",cursor:"pointer"}}
+            style={{position:"relative",paddingTop:"56.25%",background:"var(--bg-card)",cursor:"pointer"}}
           >
             {/* ── Multi-select checkbox ── */}
             {showCheckbox&&(
@@ -362,7 +401,7 @@
                 autoPlay
                 controls
                 onClick={e=>e.stopPropagation()}
-                style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",background:"#000"}}
+                style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",background:"var(--bg)"}}
               />
             ) : (
               <>
@@ -371,7 +410,7 @@
                       onError={()=>setThumbErr(true)}
                       style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",
                               filter:hov?"brightness(.65)":"brightness(.8)",transition:"filter .2s"}}/>
-                  : <div style={{position:"absolute",inset:0,background:"#111820"}}/>}
+                  : <div style={{position:"absolute",inset:0,background:"var(--bg-placeholder)"}}/>}
 
                 {/* Play button / spinner / error always centered */}
                 <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -411,11 +450,11 @@
           {/* ── Card info row ── */}
           <div style={{padding:"10px 12px",display:"flex",alignItems:"center",gap:9}}>
             <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:500,color:"#e7e9ea",lineHeight:1.4,
+              <div style={{fontSize:13,fontWeight:500,color:"var(--text)",lineHeight:1.4,
                            display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
                 {video.title||"X Video"}
               </div>
-              <div style={{fontSize:11,color:"#71767b",marginTop:3,display:"flex",gap:6,flexWrap:"wrap"}}>
+              <div style={{fontSize:11,color:"var(--text-2)",marginTop:3,display:"flex",gap:6,flexWrap:"wrap"}}>
                 <span>@{video.uploader_id||video.uploader||"?"}</span>
                 {video.view_count>0&&<span>· {fmtV(video.view_count)} views</span>}
               </div>
@@ -426,9 +465,9 @@
               title="Selecionar formato e baixar"
               onClick={e=>{e.stopPropagation();onSelect(video);}}
               onMouseEnter={e=>{e.currentTarget.style.borderColor="#1d9bf0";e.currentTarget.style.color="#1d9bf0";e.currentTarget.style.background="rgba(29,155,240,.1)";}}
-              onMouseLeave={e=>{e.currentTarget.style.borderColor="#2f3b47";e.currentTarget.style.color="#71767b";e.currentTarget.style.background="transparent";}}
-              style={{flexShrink:0,width:34,height:34,borderRadius:"50%",border:"1px solid #2f3b47",
-                      background:"transparent",color:"#71767b",cursor:"pointer",display:"flex",
+              onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border-2)";e.currentTarget.style.color="var(--text-2)";e.currentTarget.style.background="transparent";}}
+              style={{flexShrink:0,width:34,height:34,borderRadius:"50%",border:"1px solid var(--border-2)",
+                      background:"transparent",color:"var(--text-2)",cursor:"pointer",display:"flex",
                       alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
               <DlI/>
             </button>
@@ -514,30 +553,30 @@
 
       return (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,backdropFilter:"blur(4px)"}} onClick={e=>e.target===e.currentTarget&&handleClose()}>
-          <div style={{background:"#0d1117",border:"1px solid #1e2832",borderRadius:16,width:"calc(100% - 32px)",maxWidth:500,overflow:"hidden",boxShadow:"0 24px 64px rgba(0,0,0,.6)"}}>
-            <div style={{padding:"17px 22px",borderBottom:"1px solid #1e2832",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-              <span style={{color:"#e7e9ea",fontWeight:600,fontSize:15,display:"flex",alignItems:"center",gap:8}}><span style={{color:"#1d9bf0"}}><DlI/></span>Selecionar Formato</span>
-              <button onClick={handleClose} style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",display:"flex"}}><CloseI/></button>
+          <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:16,width:"calc(100% - 32px)",maxWidth:500,overflow:"hidden",boxShadow:"0 24px 64px rgba(0,0,0,.6)"}}>
+            <div style={{padding:"17px 22px",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span style={{color:"var(--text)",fontWeight:600,fontSize:15,display:"flex",alignItems:"center",gap:8}}><span style={{color:"#1d9bf0"}}><DlI/></span>Selecionar Formato</span>
+              <button onClick={handleClose} style={{background:"none",border:"none",color:"var(--text-2)",cursor:"pointer",display:"flex"}}><CloseI/></button>
             </div>
-            <div style={{padding:"13px 22px",borderBottom:"1px solid #1e2832"}}>
-              <div style={{fontSize:13,color:"#e7e9ea",fontWeight:500,marginBottom:2}}>{video.title||"X Video"}</div>
-              <div style={{fontSize:12,color:"#71767b"}}>@{video.uploader_id||video.uploader}</div>
+            <div style={{padding:"13px 22px",borderBottom:"1px solid var(--border)"}}>
+              <div style={{fontSize:13,color:"var(--text)",fontWeight:500,marginBottom:2}}>{video.title||"X Video"}</div>
+              <div style={{fontSize:12,color:"var(--text-2)"}}>@{video.uploader_id||video.uploader}</div>
             </div>
             <div style={{padding:"14px 22px",maxHeight:260,overflowY:"auto"}}>
-              {loadF?<div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"24px 0",color:"#71767b",fontSize:13}}><Spin/>Carregando formatos...</div>:(
+              {loadF?<div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"24px 0",color:"var(--text-2)",fontSize:13}}><Spin/>Carregando formatos...</div>:(
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   {allFmts.map(f=>(
-                    <div key={f.format_id} onClick={()=>setSel(f.format_id)} style={{padding:"10px 13px",borderRadius:10,border:"1px solid "+(sel===f.format_id?"#1d9bf0":"#1e2832"),background:sel===f.format_id?"rgba(29,155,240,.08)":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between",transition:"all .15s"}}>
+                    <div key={f.format_id} onClick={()=>setSel(f.format_id)} style={{padding:"10px 13px",borderRadius:10,border:"1px solid "+(sel===f.format_id?"#1d9bf0":"var(--border)"),background:sel===f.format_id?"rgba(29,155,240,.08)":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between",transition:"all .15s"}}>
                       <div style={{display:"flex",alignItems:"center",gap:10}}>
-                        <div style={{width:17,height:17,borderRadius:"50%",border:"2px solid "+(sel===f.format_id?"#1d9bf0":"#2f3b47"),display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        <div style={{width:17,height:17,borderRadius:"50%",border:"2px solid "+(sel===f.format_id?"#1d9bf0":"var(--border-2)"),display:"flex",alignItems:"center",justifyContent:"center"}}>
                           {sel===f.format_id&&<div style={{width:7,height:7,borderRadius:"50%",background:"#1d9bf0"}}/>}
                         </div>
                         <div>
-                          <div style={{fontSize:13,color:"#e7e9ea",fontWeight:500}}>{f.label}</div>
-                          {f.sub&&<div style={{fontSize:11,color:"#71767b",marginTop:2}}>{f.sub}</div>}
+                          <div style={{fontSize:13,color:"var(--text)",fontWeight:500}}>{f.label}</div>
+                          {f.sub&&<div style={{fontSize:11,color:"var(--text-2)",marginTop:2}}>{f.sub}</div>}
                         </div>
                       </div>
-                      <span style={{fontSize:12,color:"#71767b",flexShrink:0,marginLeft:12}}>{f.size}</span>
+                      <span style={{fontSize:12,color:"var(--text-2)",flexShrink:0,marginLeft:12}}>{f.size}</span>
                     </div>
                   ))}
                 </div>
@@ -545,9 +584,9 @@
             </div>
             {prog&&(
               <div style={{padding:"0 22px 14px"}}>
-                <div style={{background:"#0a0f14",borderRadius:8,padding:"12px 14px",border:"1px solid #1e2832"}}>
+                <div style={{background:"var(--bg-input)",borderRadius:8,padding:"12px 14px",border:"1px solid var(--border)"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12,marginBottom:8,gap:8}}>
-                    <span style={{color:prog.status==="error"?"#f4212e":prog.status==="complete"?"#00ba7c":prog.status==="paused"?"#f9c22e":prog.status==="cancelled"?"#71767b":"#1d9bf0"}}>
+                    <span style={{color:prog.status==="error"?"#f4212e":prog.status==="complete"?"#00ba7c":prog.status==="paused"?"#f9c22e":prog.status==="cancelled"?"var(--text-2)":"#1d9bf0"}}>
                       {prog.status==="complete"?"✓ Concluído!":
                        prog.status==="error"?"✗ "+prog.error:
                        prog.status==="paused"?"⏸ Pausado":
@@ -557,22 +596,22 @@
                     </span>
                     <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
                       {prog.status==="downloading"&&(
-                        <button onClick={pauseDl} title="Pausar" style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",display:"flex",padding:0,fontSize:13}}>⏸</button>
+                        <button onClick={pauseDl} title="Pausar" style={{background:"none",border:"none",color:"var(--text-2)",cursor:"pointer",display:"flex",padding:0,fontSize:13}}>⏸</button>
                       )}
                       {(prog.status==="downloading"||prog.status==="paused")&&(
-                        <button onClick={cancelDl} title="Cancelar" style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",display:"flex",padding:0}}><CloseI/></button>
+                        <button onClick={cancelDl} title="Cancelar" style={{background:"none",border:"none",color:"var(--text-2)",cursor:"pointer",display:"flex",padding:0}}><CloseI/></button>
                       )}
-                      <span style={{color:"#71767b"}}>{Math.round(prog.percent||0)}%</span>
+                      <span style={{color:"var(--text-2)"}}>{Math.round(prog.percent||0)}%</span>
                     </div>
                   </div>
-                  <div style={{background:"#1e2832",borderRadius:4,height:4,overflow:"hidden"}}>
+                  <div style={{background:"var(--border)",borderRadius:4,height:4,overflow:"hidden"}}>
                     <div style={{height:"100%",width:(prog.percent||0)+"%",background:prog.status==="error"?"#f4212e":prog.status==="complete"?"#00ba7c":prog.status==="paused"?"#f9c22e":"#1d9bf0",borderRadius:4,transition:"width .3s ease"}}/>
                   </div>
                 </div>
               </div>
             )}
-            <div style={{padding:"13px 22px 18px",borderTop:"1px solid #1e2832",display:"flex",gap:10}}>
-              <button onClick={handleClose} style={{flex:1,padding:"10px 0",borderRadius:9999,border:"1px solid #2f3b47",background:"transparent",color:"#e7e9ea",fontSize:14,fontWeight:600,cursor:"pointer"}}>
+            <div style={{padding:"13px 22px 18px",borderTop:"1px solid var(--border)",display:"flex",gap:10}}>
+              <button onClick={handleClose} style={{flex:1,padding:"10px 0",borderRadius:9999,border:"1px solid var(--border-2)",background:"transparent",color:"var(--text)",fontSize:14,fontWeight:600,cursor:"pointer"}}>
                 {prog?.status==="downloading"||prog?.status==="paused"?"Fechar (bg)":"Cancelar"}
               </button>
               <button onClick={startDl} disabled={prog?.status==="downloading"} style={{flex:2,padding:"10px 0",borderRadius:9999,border:"none",background:prog?.status==="complete"?"#00ba7c":"#1d9bf0",color:"#fff",fontSize:14,fontWeight:700,cursor:prog?.status==="downloading"?"not-allowed":"pointer",opacity:prog?.status==="downloading"?.6:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,transition:"all .2s"}}>
@@ -598,7 +637,7 @@
       return (
         <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:300,
           background:"rgba(10,15,20,.97)",backdropFilter:"blur(14px)",
-          borderTop:"1px solid #1e2832",boxShadow:"0 -4px 28px rgba(0,0,0,.5)",
+          borderTop:"1px solid var(--border)",boxShadow:"0 -4px 28px rgba(0,0,0,.5)",
           animation:"fadeIn .18s ease"}}>
           <div style={{maxWidth:960,margin:"0 auto",padding:"12px 20px",
             display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
@@ -608,18 +647,18 @@
               </span>
               {count<total&&(
                 <button onClick={onSelectAll}
-                  style={{background:"none",border:"none",color:"#71767b",fontSize:12,cursor:"pointer",padding:0,textDecoration:"underline"}}>
+                  style={{background:"none",border:"none",color:"var(--text-2)",fontSize:12,cursor:"pointer",padding:0,textDecoration:"underline"}}>
                   Selecionar todos ({total})
                 </button>
               )}
               <button onClick={onClear}
-                style={{background:"none",border:"none",color:"#71767b",fontSize:12,cursor:"pointer",padding:0,textDecoration:"underline"}}>
+                style={{background:"none",border:"none",color:"var(--text-2)",fontSize:12,cursor:"pointer",padding:0,textDecoration:"underline"}}>
                 Limpar
               </button>
             </div>
             <select value={fmt} onChange={e=>onFmtChange(e.target.value)}
-              style={{background:"#0a0f14",border:"1px solid #2f3b47",borderRadius:8,
-                color:"#e7e9ea",fontSize:13,padding:"8px 10px",cursor:"pointer"}}>
+              style={{background:"var(--bg-input)",border:"1px solid var(--border-2)",borderRadius:8,
+                color:"var(--text)",fontSize:13,padding:"8px 10px",cursor:"pointer"}}>
               {BULK_FMTS.map(f=><option key={f.id} value={f.id}>{f.label}</option>)}
             </select>
             <button onClick={onDownload}
@@ -713,15 +752,15 @@
       return (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.78)",display:"flex",
           alignItems:"center",justifyContent:"center",zIndex:1000,backdropFilter:"blur(4px)"}}>
-          <div style={{background:"#0d1117",border:"1px solid #1e2832",borderRadius:16,
+          <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:16,
             width:"calc(100% - 32px)",maxWidth:540,maxHeight:"82vh",
             display:"flex",flexDirection:"column",boxShadow:"0 24px 64px rgba(0,0,0,.6)"}}>
 
             {/* Header */}
-            <div style={{padding:"16px 22px",borderBottom:"1px solid #1e2832",
+            <div style={{padding:"16px 22px",borderBottom:"1px solid var(--border)",
               display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <div>
-                <span style={{color:"#e7e9ea",fontWeight:700,fontSize:15}}>
+                <span style={{color:"var(--text)",fontWeight:700,fontSize:15}}>
                   Baixando {items.length} vídeo{items.length!==1?"s":""}
                 </span>
                 {allDone&&<span style={{color:"#00ba7c",fontSize:13,marginLeft:10}}>✓ Todos concluídos</span>}
@@ -730,7 +769,7 @@
                   clearInterval(ivRef.current);
                   const running=stRef.current.filter(x=>x.taskId&&!DL_DONE.includes(x.prog.status)).map(x=>({taskId:x.taskId,title:x.title,url:x.url,format_id:x.fmt,prog:x.prog}));
                   onClose(running.length?running:null);
-                }} style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",display:"flex"}}><CloseI/></button>
+                }} style={{background:"none",border:"none",color:"var(--text-2)",cursor:"pointer",display:"flex"}}><CloseI/></button>
             </div>
 
             {/* Video list */}
@@ -739,9 +778,9 @@
                 const st=item.prog.status;
                 const barColor=st==="error"?"#f4212e":st==="complete"?"#00ba7c":st==="paused"?"#f9c22e":"#1d9bf0";
                 return (
-                  <div key={i} style={{background:"#0a0f14",borderRadius:10,padding:"11px 14px",border:"1px solid #1e2832"}}>
+                  <div key={i} style={{background:"var(--bg-input)",borderRadius:10,padding:"11px 14px",border:"1px solid var(--border)"}}>
                     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:7}}>
-                      <div style={{flex:1,fontSize:13,color:"#e7e9ea",fontWeight:500,
+                      <div style={{flex:1,fontSize:13,color:"var(--text)",fontWeight:500,
                         overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                         {item.title||"X Video"}
                       </div>
@@ -754,13 +793,13 @@
                       )}
                       {st==="downloading"&&item.taskId&&(
                         <button onClick={()=>pauseItem(item.taskId)} title="Pausar"
-                          style={{flexShrink:0,background:"none",border:"1px solid #2f3b47",borderRadius:9999,
-                            color:"#71767b",fontSize:11,padding:"3px 9px",cursor:"pointer"}}>⏸</button>
+                          style={{flexShrink:0,background:"none",border:"1px solid var(--border-2)",borderRadius:9999,
+                            color:"var(--text-2)",fontSize:11,padding:"3px 9px",cursor:"pointer"}}>⏸</button>
                       )}
                       {(st==="downloading"||st==="paused")&&item.taskId&&(
                         <button onClick={()=>cancelItem(item.taskId)} title="Cancelar"
-                          style={{flexShrink:0,background:"none",border:"1px solid #2f3b47",borderRadius:9999,
-                            color:"#71767b",fontSize:11,padding:"3px 9px",cursor:"pointer"}}>✕</button>
+                          style={{flexShrink:0,background:"none",border:"1px solid var(--border-2)",borderRadius:9999,
+                            color:"var(--text-2)",fontSize:11,padding:"3px 9px",cursor:"pointer"}}>✕</button>
                       )}
                       {st==="paused"&&item.taskId&&(
                         <button onClick={()=>resumeItem(item.taskId)} title="Retomar"
@@ -768,12 +807,12 @@
                             color:"#1d9bf0",fontSize:11,padding:"3px 9px",cursor:"pointer"}}>▶ Retomar</button>
                       )}
                     </div>
-                    <div style={{background:"#1e2832",borderRadius:3,height:3,overflow:"hidden",marginBottom:6}}>
+                    <div style={{background:"var(--border)",borderRadius:3,height:3,overflow:"hidden",marginBottom:6}}>
                       <div style={{height:"100%",borderRadius:3,transition:"width .3s ease",
                         width:(item.prog.percent||0)+"%",background:barColor}}/>
                     </div>
                     <div style={{display:"flex",justifyContent:"space-between",fontSize:11}}>
-                      <span style={{color:st==="error"?"#f4212e":st==="complete"?"#00ba7c":st==="paused"?"#f9c22e":"#71767b"}}>
+                      <span style={{color:st==="error"?"#f4212e":st==="complete"?"#00ba7c":st==="paused"?"#f9c22e":"var(--text-2)"}}>
                         {st==="complete"?"✓ Concluído":
                          st==="error"?"✗ "+(item.prog.error||"Erro"):
                          st==="paused"?"⏸ Pausado":
@@ -781,7 +820,7 @@
                          st==="queued"?"Aguardando...":
                          "Baixando… "+(item.prog.speed||"")}
                       </span>
-                      <span style={{color:"#71767b"}}>{Math.round(item.prog.percent||0)}%</span>
+                      <span style={{color:"var(--text-2)"}}>{Math.round(item.prog.percent||0)}%</span>
                     </div>
                   </div>
                 );
@@ -789,8 +828,8 @@
             </div>
 
             {/* Footer */}
-            <div style={{padding:"12px 22px",borderTop:"1px solid #1e2832",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
-              <span style={{fontSize:12,color:"#71767b"}}>
+            <div style={{padding:"12px 22px",borderTop:"1px solid var(--border)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+              <span style={{fontSize:12,color:"var(--text-2)"}}>
                 {allDone?`${doneCount} de ${items.length} baixado${doneCount!==1?"s":""}`
                   :`${doneCount} de ${items.length} concluído${doneCount!==1?"s":""}`}
               </span>
@@ -799,8 +838,8 @@
                   const running=stRef.current.filter(x=>x.taskId&&!DL_DONE.includes(x.prog.status)).map(x=>({taskId:x.taskId,title:x.title,url:x.url,format_id:x.fmt,prog:x.prog}));
                   onClose(running.length?running:null);
                 }}
-                style={{padding:"9px 24px",borderRadius:9999,border:"1px solid #2f3b47",
-                  background:"transparent",color:"#e7e9ea",fontSize:14,fontWeight:600,cursor:"pointer"}}>
+                style={{padding:"9px 24px",borderRadius:9999,border:"1px solid var(--border-2)",
+                  background:"transparent",color:"var(--text)",fontSize:14,fontWeight:600,cursor:"pointer"}}>
                 {allDone?"Fechar":"Minimizar"}
               </button>
             </div>
@@ -834,20 +873,20 @@
         <div style={{position:"fixed",bottom:20,right:20,zIndex:500,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:8}}>
           {/* expanded panel */}
           {open&&(
-            <div style={{width:"min(340px, calc(100vw - 40px))",background:"#0d1117",border:"1px solid #1e2832",borderRadius:14,
+            <div style={{width:"min(340px, calc(100vw - 40px))",background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:14,
               boxShadow:"0 12px 48px rgba(0,0,0,.7)",overflow:"hidden",animation:"fadeIn .15s ease"}}>
-              <div style={{padding:"12px 16px",borderBottom:"1px solid #1e2832",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                <span style={{fontWeight:700,fontSize:13,color:"#e7e9ea"}}>Downloads em background</span>
-                <button onClick={()=>setOpen(false)} style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",display:"flex"}}><CloseI/></button>
+              <div style={{padding:"12px 16px",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <span style={{fontWeight:700,fontSize:13,color:"var(--text)"}}>Downloads em background</span>
+                <button onClick={()=>setOpen(false)} style={{background:"none",border:"none",color:"var(--text-2)",cursor:"pointer",display:"flex"}}><CloseI/></button>
               </div>
               <div style={{maxHeight:320,overflowY:"auto",padding:"10px 14px",display:"flex",flexDirection:"column",gap:8}}>
                 {tasks.map((item,i)=>{
                   const st=item.prog.status;
                   const clr=st==="error"?"#f4212e":st==="complete"?"#00ba7c":st==="paused"?"#f9c22e":"#1d9bf0";
                   return (
-                    <div key={i} style={{background:"#0a0f14",borderRadius:9,padding:"9px 12px",border:"1px solid #1e2832"}}>
+                    <div key={i} style={{background:"var(--bg-input)",borderRadius:9,padding:"9px 12px",border:"1px solid var(--border)"}}>
                       <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
-                        <div style={{flex:1,fontSize:12,color:"#e7e9ea",fontWeight:500,
+                        <div style={{flex:1,fontSize:12,color:"var(--text)",fontWeight:500,
                           overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                           {item.title||"Vídeo"}
                         </div>
@@ -860,13 +899,13 @@
                         )}
                         {st==="downloading"&&item.taskId&&onPause&&(
                           <button onClick={()=>onPause(item.taskId)} title="Pausar"
-                            style={{flexShrink:0,background:"none",border:"1px solid #2f3b47",borderRadius:9999,
-                              color:"#71767b",fontSize:10,padding:"2px 7px",cursor:"pointer"}}>⏸</button>
+                            style={{flexShrink:0,background:"none",border:"1px solid var(--border-2)",borderRadius:9999,
+                              color:"var(--text-2)",fontSize:10,padding:"2px 7px",cursor:"pointer"}}>⏸</button>
                         )}
                         {(st==="downloading"||st==="paused")&&item.taskId&&onCancel&&(
                           <button onClick={()=>onCancel(item.taskId)} title="Cancelar"
-                            style={{flexShrink:0,background:"none",border:"1px solid #2f3b47",borderRadius:9999,
-                              color:"#71767b",fontSize:10,padding:"2px 7px",cursor:"pointer"}}>✕</button>
+                            style={{flexShrink:0,background:"none",border:"1px solid var(--border-2)",borderRadius:9999,
+                              color:"var(--text-2)",fontSize:10,padding:"2px 7px",cursor:"pointer"}}>✕</button>
                         )}
                         {st==="paused"&&item.taskId&&onResume&&(
                           <button onClick={()=>onResume(item.taskId)} title="Retomar"
@@ -874,7 +913,7 @@
                               color:"#1d9bf0",fontSize:10,padding:"2px 7px",cursor:"pointer"}}>▶</button>
                         )}
                       </div>
-                      <div style={{background:"#1e2832",borderRadius:3,height:3,overflow:"hidden",marginBottom:4}}>
+                      <div style={{background:"var(--border)",borderRadius:3,height:3,overflow:"hidden",marginBottom:4}}>
                         <div style={{height:"100%",borderRadius:3,width:(item.prog.percent||0)+"%",background:clr,transition:"width .3s ease"}}/>
                       </div>
                       <div style={{display:"flex",justifyContent:"space-between",fontSize:11}}>
@@ -883,17 +922,17 @@
                            st==="paused"?"⏸ Pausado":st==="cancelled"?"✗ Cancelado":
                            st==="queued"?"Aguardando…":"Baixando… "+(item.prog.speed||"")}
                         </span>
-                        <span style={{color:"#71767b"}}>{Math.round(item.prog.percent||0)}%</span>
+                        <span style={{color:"var(--text-2)"}}>{Math.round(item.prog.percent||0)}%</span>
                       </div>
                     </div>
                   );
                 })}
               </div>
               {(done.length>0||errors.length>0||cancelled.length>0)&&(
-                <div style={{padding:"10px 14px",borderTop:"1px solid #1e2832",display:"flex",justifyContent:"flex-end"}}>
+                <div style={{padding:"10px 14px",borderTop:"1px solid var(--border)",display:"flex",justifyContent:"flex-end"}}>
                   <button onClick={onClear}
-                    style={{background:"none",border:"1px solid #2f3b47",borderRadius:8,
-                      color:"#71767b",fontSize:11,padding:"4px 12px",cursor:"pointer"}}>
+                    style={{background:"none",border:"1px solid var(--border-2)",borderRadius:8,
+                      color:"var(--text-2)",fontSize:11,padding:"4px 12px",cursor:"pointer"}}>
                     Limpar concluídos
                   </button>
                 </div>
@@ -918,33 +957,33 @@
     function LibraryGrid({ items, loading, err, onOpen }) {
       if (loading) {
         return (
-          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"60px 0",color:"#71767b"}}>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"60px 0",color:"var(--text-2)"}}>
             <Spin size={28}/>Carregando vídeos…
           </div>
         );
       }
       if (!items.length) {
         return (
-          <div style={{textAlign:"center",paddingTop:48,color:"#71767b"}}>
+          <div style={{textAlign:"center",paddingTop:48,color:"var(--text-2)"}}>
             <div style={{fontSize:44,marginBottom:14,opacity:.35}}>📁</div>
-            <div style={{fontSize:15,fontWeight:500,color:"#2f3b47",marginBottom:6}}>Nenhum vídeo baixado</div>
+            <div style={{fontSize:15,fontWeight:500,color:"var(--border-2)",marginBottom:6}}>Nenhum vídeo baixado</div>
             <div style={{fontSize:13}}>{err||"Os vídeos baixados aparecerão aqui."}</div>
           </div>
         );
       }
       return (
         <div style={{animation:"fadeIn .4s ease"}}>
-          <div style={{marginBottom:16,fontSize:14,color:"#e7e9ea",fontWeight:600}}>
+          <div style={{marginBottom:16,fontSize:14,color:"var(--text)",fontWeight:600}}>
             {items.length} vídeo{items.length!==1?"s":""} baixado{items.length!==1?"s":""}
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:13}}>
             {items.map((it,i)=>(
               <div key={it.name} onClick={()=>onOpen(i)}
-                style={{background:"#0a0f14",border:"2px solid #1e2832",borderRadius:12,
+                style={{background:"var(--bg-input)",border:"2px solid var(--border)",borderRadius:12,
                   overflow:"hidden",cursor:"pointer",transition:"border-color .15s"}}
                 onMouseEnter={e=>e.currentTarget.style.borderColor="#1d9bf0"}
-                onMouseLeave={e=>e.currentTarget.style.borderColor="#1e2832"}>
-                <div style={{position:"relative",paddingTop:"56.25%",background:"#0d1117",
+                onMouseLeave={e=>e.currentTarget.style.borderColor="var(--border)"}>
+                <div style={{position:"relative",paddingTop:"56.25%",background:"var(--bg-card)",
                   display:"flex",alignItems:"center",justifyContent:"center"}}>
                   <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
                     <div style={{width:52,height:52,borderRadius:"50%",background:"rgba(0,0,0,.72)",
@@ -954,11 +993,11 @@
                   </div>
                 </div>
                 <div style={{padding:"10px 12px"}}>
-                  <div style={{fontSize:13,fontWeight:500,color:"#e7e9ea",lineHeight:1.4,
+                  <div style={{fontSize:13,fontWeight:500,color:"var(--text)",lineHeight:1.4,
                     display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",wordBreak:"break-all"}}>
                     {it.name}
                   </div>
-                  <div style={{fontSize:11,color:"#71767b",marginTop:3}}>{it.size_mb} MB</div>
+                  <div style={{fontSize:11,color:"var(--text-2)",marginTop:3}}>{it.size_mb} MB</div>
                 </div>
               </div>
             ))}
@@ -1166,7 +1205,7 @@
       }
 
       const OVL = {position:"fixed",inset:0,background:"rgba(0,0,0,.78)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,backdropFilter:"blur(4px)"};
-      const BOX = {background:"#0d1117",border:"1px solid #1e2832",borderRadius:16,width:"calc(100% - 32px)",maxWidth:540,overflow:"hidden",boxShadow:"0 24px 64px rgba(0,0,0,.6)"};
+      const BOX = {background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:16,width:"calc(100% - 32px)",maxWidth:540,overflow:"hidden",boxShadow:"0 24px 64px rgba(0,0,0,.6)"};
 
       if (phase === "done") return (
         <div style={OVL} onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -1174,10 +1213,10 @@
             <div style={{padding:"40px 28px",textAlign:"center"}}>
               <div style={{width:56,height:56,borderRadius:"50%",background:"rgba(0,186,124,.15)",border:"2px solid #00ba7c",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",fontSize:24}}>✓</div>
               <div style={{color:"#00ba7c",fontSize:17,fontWeight:700,marginBottom:6}}>Tweet publicado!</div>
-              <div style={{color:"#71767b",fontSize:13,marginBottom:24}}>Seu vídeo foi enviado para o X com sucesso.</div>
+              <div style={{color:"var(--text-2)",fontSize:13,marginBottom:24}}>Seu vídeo foi enviado para o X com sucesso.</div>
               <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
                 {tweetUrl&&<a href={tweetUrl} target="_blank" rel="noreferrer" style={{padding:"10px 22px",borderRadius:9999,background:"#1d9bf0",color:"#fff",fontSize:14,fontWeight:700,textDecoration:"none"}}>Ver no X</a>}
-                <button onClick={onClose} style={{padding:"10px 22px",borderRadius:9999,border:"1px solid #2f3b47",background:"transparent",color:"#e7e9ea",fontSize:14,fontWeight:600,cursor:"pointer"}}>Fechar</button>
+                <button onClick={onClose} style={{padding:"10px 22px",borderRadius:9999,border:"1px solid var(--border-2)",background:"transparent",color:"var(--text)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Fechar</button>
               </div>
             </div>
           </div>
@@ -1188,12 +1227,12 @@
         <div style={OVL} onClick={e=>e.target===e.currentTarget&&onClose()}>
           <div style={BOX}>
             {/* Cabeçalho */}
-            <div style={{padding:"14px 20px",borderBottom:"1px solid #1e2832",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div style={{padding:"14px 20px",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
                 <span style={{color:"#1d9bf0"}}><XI/></span>
-                <span style={{color:"#e7e9ea",fontWeight:700,fontSize:15}}>Novo Tweet</span>
+                <span style={{color:"var(--text)",fontWeight:700,fontSize:15}}>Novo Tweet</span>
               </div>
-              <button onClick={onClose} style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",display:"flex"}}><CloseI/></button>
+              <button onClick={onClose} style={{background:"none",border:"none",color:"var(--text-2)",cursor:"pointer",display:"flex"}}><CloseI/></button>
             </div>
             {/* Corpo */}
             <div style={{padding:"16px 20px"}}>
@@ -1205,13 +1244,13 @@
               <textarea value={text} onChange={e=>setText(e.target.value)}
                 placeholder="O que está acontecendo?" rows={4} maxLength={320}
                 disabled={phase==="posting"}
-                style={{width:"100%",padding:"12px 14px",background:"#0a0f14",border:"1px solid #1e2832",borderRadius:10,color:"#e7e9ea",fontSize:15,fontFamily:"system-ui,sans-serif",resize:"vertical",marginBottom:14,lineHeight:1.6,transition:"border-color .15s"}}
+                style={{width:"100%",padding:"12px 14px",background:"var(--bg-input)",border:"1px solid var(--border)",borderRadius:10,color:"var(--text)",fontSize:15,fontFamily:"system-ui,sans-serif",resize:"vertical",marginBottom:14,lineHeight:1.6,transition:"border-color .15s"}}
                 onFocus={e=>e.target.style.borderColor="#1d9bf0"}
-                onBlur={e=>e.target.style.borderColor="#1e2832"}
+                onBlur={e=>e.target.style.borderColor="var(--border)"}
               />
               {/* Preview do vídeo */}
               {thumbUrl&&(
-                <div style={{position:"relative",borderRadius:10,overflow:"hidden",marginBottom:14,border:"1px solid #1e2832",background:"#000"}}>
+                <div style={{position:"relative",borderRadius:10,overflow:"hidden",marginBottom:14,border:"1px solid var(--border)",background:"var(--bg)"}}>
                   <video src={thumbUrl} style={{width:"100%",maxHeight:180,objectFit:"cover",display:"block"}} muted/>
                   {phase==="uploading"&&(
                     <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.65)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10}}>
@@ -1228,36 +1267,36 @@
               {/* Barra de progresso */}
               {phase==="uploading"&&(
                 <div style={{marginBottom:14}}>
-                  <div style={{background:"#1e2832",borderRadius:4,height:4,overflow:"hidden"}}>
+                  <div style={{background:"var(--border)",borderRadius:4,height:4,overflow:"hidden"}}>
                     <div style={{height:"100%",width:progress+"%",background:"#1d9bf0",borderRadius:4,transition:"width .25s ease"}}/>
                   </div>
-                  <div style={{fontSize:11,color:"#71767b",marginTop:5}}>Enviando vídeo… {progress}% {file&&"· "+Math.round(file.size/1048576)+" MB total"}</div>
+                  <div style={{fontSize:11,color:"var(--text-2)",marginTop:5}}>Enviando vídeo… {progress}% {file&&"· "+Math.round(file.size/1048576)+" MB total"}</div>
                 </div>
               )}
               {/* Rodapé — anexar + contador + publicar */}
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,paddingTop:4,borderTop:"1px solid #1e2832",marginTop:4}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,paddingTop:4,borderTop:"1px solid var(--border)",marginTop:4}}>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <input ref={fileRef} type="file" accept="video/*" style={{display:"none"}} onChange={e=>handleFile(e.target.files[0])}/>
                   <button onClick={()=>fileRef.current.click()} disabled={phase!=="idle"} title="Anexar vídeo"
-                    style={{width:36,height:36,borderRadius:"50%",border:"1px solid "+(phase==="idle"?"rgba(29,155,240,.4)":"#2f3b47"),background:"transparent",color:phase==="idle"?"#1d9bf0":"#2f3b47",cursor:phase==="idle"?"pointer":"not-allowed",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,transition:"all .15s"}}>
+                    style={{width:36,height:36,borderRadius:"50%",border:"1px solid "+(phase==="idle"?"rgba(29,155,240,.4)":"var(--border-2)"),background:"transparent",color:phase==="idle"?"#1d9bf0":"var(--border-2)",cursor:phase==="idle"?"pointer":"not-allowed",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,transition:"all .15s"}}>
                     🎬
                   </button>
-                  {file&&!thumbUrl&&<span style={{fontSize:11,color:"#71767b",maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{file.name}</span>}
+                  {file&&!thumbUrl&&<span style={{fontSize:11,color:"var(--text-2)",maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{file.name}</span>}
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:12}}>
                   {/* Anel contador de caracteres (igual ao X) */}
                   <div style={{position:"relative",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center"}}>
                     <svg viewBox="0 0 22 22" width="22" height="22" style={{transform:"rotate(-90deg)"}}>
-                      <circle cx="11" cy="11" r="9" fill="none" stroke="#2f3b47" strokeWidth="2.2"/>
+                      <circle cx="11" cy="11" r="9" fill="none" stroke="var(--border-2)" strokeWidth="2.2"/>
                       <circle cx="11" cy="11" r="9" fill="none" strokeWidth="2.2"
                         stroke={charLeft<0?"#f4212e":charLeft<=20?"#ffd400":"#1d9bf0"}
                         strokeDasharray={`${Math.max(0,Math.min(1,(280-charLeft)/280))*56.5} 56.5`}
                         strokeLinecap="round"/>
                     </svg>
-                    {charLeft<=20&&<span style={{position:"absolute",fontSize:8,fontWeight:700,color:charLeft<0?"#f4212e":"#71767b"}}>{charLeft}</span>}
+                    {charLeft<=20&&<span style={{position:"absolute",fontSize:8,fontWeight:700,color:charLeft<0?"#f4212e":"var(--text-2)"}}>{charLeft}</span>}
                   </div>
                   <button onClick={handlePost} disabled={!canPost}
-                    style={{padding:"9px 24px",borderRadius:9999,border:"none",background:canPost?"#1d9bf0":"#1e2832",color:canPost?"#fff":"#71767b",fontSize:14,fontWeight:700,cursor:canPost?"pointer":"not-allowed",display:"flex",alignItems:"center",gap:8,transition:"all .2s"}}>
+                    style={{padding:"9px 24px",borderRadius:9999,border:"none",background:canPost?"#1d9bf0":"var(--border)",color:canPost?"#fff":"var(--text-2)",fontSize:14,fontWeight:700,cursor:canPost?"pointer":"not-allowed",display:"flex",alignItems:"center",gap:8,transition:"all .2s"}}>
                     {phase==="posting"?<><Spin size={14} color="#fff"/>Publicando…</>:"Publicar"}
                   </button>
                 </div>
@@ -1268,7 +1307,7 @@
       );
     }
 
-    function App() {
+    function App({ theme, onToggleTheme }) {
       const [session,   setSession]   = useState(null);
       const [query,     setQuery]     = useState("");
       const [type,      setType]      = useState("keyword");
@@ -1652,7 +1691,7 @@
         else addToHistory({platform:"all", type:"search", query:q, category:undefined});
       }
 
-      if(session===null) return <div style={{minHeight:"100vh",background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}><Spin size={36}/></div>;
+      if(session===null) return <div style={{minHeight:"100vh",background:"var(--bg)",display:"flex",alignItems:"center",justifyContent:"center"}}><Spin size={36}/></div>;
       if(!session.logged_in) return <AuthScreen onSuccess={()=>fetch(API+"/session").then(r=>r.json()).then(setSession)}/>;
 
       const tabs=[
@@ -1667,36 +1706,36 @@
       const methodLabel={chrome:"Chrome",firefox:"Firefox",edge:"Edge",brave:"Brave",opera:"Opera",paste:"cookies colados"};
 
       return (
-        <div style={{minHeight:"100vh",background:"#000",color:"#e7e9ea",fontFamily:"system-ui,-apple-system,sans-serif"}}>
+        <div style={{minHeight:"100vh",background:"var(--bg)",color:"var(--text)",fontFamily:"system-ui,-apple-system,sans-serif"}}>
           <style>{}</style>
 
-          <div style={{borderBottom:"1px solid #1e2832",position:"sticky",top:0,background:"rgba(0,0,0,.92)",backdropFilter:"blur(12px)",zIndex:100}}>
+          <div style={{borderBottom:"1px solid var(--border)",position:"sticky",top:0,background:"rgba(0,0,0,.92)",backdropFilter:"blur(12px)",zIndex:100}}>
             <div className="page-container hdr-row" style={{maxWidth:960,margin:"0 auto",padding:"0 20px",height:56,display:"flex",alignItems:"center",gap:14}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,color:"#e7e9ea"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,color:"var(--text)"}}>
                 <div style={{color:"#1d9bf0"}}><XI/></div>
                 <span className="hdr-title-text" style={{fontWeight:800,fontSize:16,letterSpacing:"-0.3px"}}>Video Scraper</span>
               </div>
               <div style={{flex:1}}/>
               {session.download_dir&&(
-                <div className="hdr-extra" style={{fontSize:11,color:"#71767b",display:"flex",alignItems:"center",gap:5,maxWidth:280,overflow:"hidden"}}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#71767b" strokeWidth="2" strokeLinecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                <div className="hdr-extra" style={{fontSize:11,color:"var(--text-2)",display:"flex",alignItems:"center",gap:5,maxWidth:280,overflow:"hidden"}}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" strokeWidth="2" strokeLinecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                   <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={session.download_dir}>{session.download_dir}</span>
                 </div>
               )}
-              <div className="hdr-extra" style={{fontSize:12,color:"#71767b",flexShrink:0}}>via <span style={{color:"#e7e9ea",fontWeight:500}}>{methodLabel[session.method]||"cookies"}</span></div>
+              <div className="hdr-extra" style={{fontSize:12,color:"var(--text-2)",flexShrink:0}}>via <span style={{color:"var(--text)",fontWeight:500}}>{methodLabel[session.method]||"cookies"}</span></div>
               {view==="search"&&(
                 <button onClick={()=>setShowHistory(v=>!v)}
                   title="Histórico e favoritos de busca"
                   style={{display:"flex",alignItems:"center",gap:6,background:showHistory?"rgba(29,155,240,.15)":"none",
-                    border:"1px solid "+(showHistory?"rgba(29,155,240,.3)":"#2f3b47"),borderRadius:9999,
-                    color:showHistory?"#1d9bf0":"#71767b",fontSize:12,padding:"5px 12px",cursor:"pointer",fontWeight:500,flexShrink:0}}>
+                    border:"1px solid "+(showHistory?"rgba(29,155,240,.3)":"var(--border-2)"),borderRadius:9999,
+                    color:showHistory?"#1d9bf0":"var(--text-2)",fontSize:12,padding:"5px 12px",cursor:"pointer",fontWeight:500,flexShrink:0}}>
                   <ClockI/><span className="hdr-btn-label">Histórico</span>
                 </button>
               )}
               <button onClick={()=>{ const nv=view==="library"?"search":"library"; setView(nv); if(nv==="library") loadLibrary(); }}
                 style={{display:"flex",alignItems:"center",gap:6,background:view==="library"?"rgba(29,155,240,.15)":"none",
-                  border:"1px solid "+(view==="library"?"rgba(29,155,240,.3)":"#2f3b47"),borderRadius:9999,
-                  color:view==="library"?"#1d9bf0":"#71767b",fontSize:12,padding:"5px 12px",cursor:"pointer",fontWeight:500,flexShrink:0}}>
+                  border:"1px solid "+(view==="library"?"rgba(29,155,240,.3)":"var(--border-2)"),borderRadius:9999,
+                  color:view==="library"?"#1d9bf0":"var(--text-2)",fontSize:12,padding:"5px 12px",cursor:"pointer",fontWeight:500,flexShrink:0}}>
                 {view==="library"?<><SrchI/><span className="hdr-btn-label">Buscar</span></>:<><FolderI/><span className="hdr-btn-label">Meus Vídeos</span></>}
               </button>
               <button onClick={()=>setShowPost(true)}
@@ -1704,7 +1743,11 @@
                 style={{display:"flex",alignItems:"center",gap:6,background:"rgba(29,155,240,.15)",border:"1px solid rgba(29,155,240,.3)",borderRadius:9999,color:"#1d9bf0",fontSize:12,padding:"5px 12px",cursor:"pointer",fontWeight:700,flexShrink:0,transition:"all .15s"}}>
                 <PencilI/><span className="hdr-btn-label">Publicar</span>
               </button>
-              <button onClick={logout} style={{background:"none",border:"1px solid #2f3b47",borderRadius:9999,color:"#71767b",fontSize:12,padding:"5px 12px",cursor:"pointer",fontWeight:500,flexShrink:0}}>Sair</button>
+              <button onClick={onToggleTheme} title={theme==="dark"?"Tema claro":"Tema escuro"}
+                style={{display:"flex",alignItems:"center",background:"none",border:"1px solid var(--border-2)",borderRadius:9999,color:"var(--text-2)",padding:"6px 9px",cursor:"pointer",flexShrink:0}}>
+                {theme==="dark"?<SunI/>:<MoonI/>}
+              </button>
+              <button onClick={logout} style={{background:"none",border:"1px solid var(--border-2)",borderRadius:9999,color:"var(--text-2)",fontSize:12,padding:"5px 12px",cursor:"pointer",fontWeight:500,flexShrink:0}}>Sair</button>
             </div>
           </div>
 
@@ -1713,29 +1756,29 @@
             <LibraryGrid items={library} loading={libLoading} err={libErr} onOpen={setPlayerIdx}/>
           ) : (<>
             {showHistory&&(
-              <div style={{background:"#0d1117",border:"1px solid #1e2832",borderRadius:16,padding:16,marginBottom:26,boxShadow:"0 4px 24px rgba(0,0,0,.3)",animation:"fadeIn .2s ease"}}>
+              <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:16,padding:16,marginBottom:26,boxShadow:"0 4px 24px rgba(0,0,0,.3)",animation:"fadeIn .2s ease"}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:searchHistory.length?12:0}}>
-                  <span style={{fontSize:13,fontWeight:700,color:"#e7e9ea",display:"flex",alignItems:"center",gap:7}}><ClockI/>Histórico e favoritos</span>
+                  <span style={{fontSize:13,fontWeight:700,color:"var(--text)",display:"flex",alignItems:"center",gap:7}}><ClockI/>Histórico e favoritos</span>
                   {searchHistory.some(h=>!h.favorite)&&(
-                    <button onClick={clearHistory} style={{background:"none",border:"none",color:"#71767b",fontSize:12,cursor:"pointer",padding:"4px 6px"}}>Limpar histórico</button>
+                    <button onClick={clearHistory} style={{background:"none",border:"none",color:"var(--text-2)",fontSize:12,cursor:"pointer",padding:"4px 6px"}}>Limpar histórico</button>
                   )}
                 </div>
                 {!searchHistory.length ? (
-                  <div style={{fontSize:13,color:"#71767b",padding:"8px 2px"}}>Nenhuma busca ainda. Suas buscas aparecem aqui automaticamente.</div>
+                  <div style={{fontSize:13,color:"var(--text-2)",padding:"8px 2px"}}>Nenhuma busca ainda. Suas buscas aparecem aqui automaticamente.</div>
                 ) : (
                   <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:320,overflowY:"auto"}}>
                     {searchHistory.map(h=>(
-                      <div key={h.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,background:"#0a0f14",border:"1px solid #1e2832"}}>
+                      <div key={h.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,background:"var(--bg-input)",border:"1px solid var(--border)"}}>
                         <button onClick={()=>toggleFavorite(h.id)} title={h.favorite?"Remover dos favoritos":"Favoritar"}
                           style={{background:"none",border:"none",cursor:"pointer",padding:2,display:"flex",flexShrink:0}}>
                           <StarI filled={h.favorite}/>
                         </button>
                         <button onClick={()=>runHistoryEntry(h)}
-                          style={{flex:1,textAlign:"left",background:"none",border:"none",color:"#e7e9ea",fontSize:13,cursor:"pointer",padding:"2px 0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                          style={{flex:1,textAlign:"left",background:"none",border:"none",color:"var(--text)",fontSize:13,cursor:"pointer",padding:"2px 0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                           {historyLabel(h)}
                         </button>
                         <button onClick={()=>removeHistoryEntry(h.id)} title="Remover"
-                          style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",padding:2,display:"flex",flexShrink:0}}>
+                          style={{background:"none",border:"none",color:"var(--text-2)",cursor:"pointer",padding:2,display:"flex",flexShrink:0}}>
                           <CloseI/>
                         </button>
                       </div>
@@ -1744,10 +1787,10 @@
                 )}
               </div>
             )}
-            <div style={{background:"#0d1117",border:"1px solid #1e2832",borderRadius:16,padding:20,marginBottom:26,boxShadow:"0 4px 24px rgba(0,0,0,.3)"}}>
+            <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:16,padding:20,marginBottom:26,boxShadow:"0 4px 24px rgba(0,0,0,.3)"}}>
 
               {/* Platform selector (includes "🌐 Tudo" — searches every platform at once) */}
-              <div style={{display:"flex",gap:5,marginBottom:14,background:"#0a0f14",padding:4,borderRadius:10,border:"1px solid #1e2832",flexWrap:"wrap"}}>
+              <div style={{display:"flex",gap:5,marginBottom:14,background:"var(--bg-input)",padding:4,borderRadius:10,border:"1px solid var(--border)",flexWrap:"wrap"}}>
                 {[
                   {id:"x",        label:"𝕏 (Twitter)"},
                   {id:"xhamster", label:"xHamster"},
@@ -1765,7 +1808,7 @@
                       }}
                       style={{flex:1,minWidth:70,padding:"7px 4px",borderRadius:8,border:"none",
                         background:active?"rgba(29,155,240,.15)":"transparent",
-                        color:active?"#1d9bf0":"#71767b",
+                        color:active?"#1d9bf0":"var(--text-2)",
                         fontSize:12,fontWeight:active?700:400,cursor:"pointer",
                         transition:"all .15s",outline:active?"1px solid rgba(29,155,240,.3)":"none"}}>
                       {p.label}
@@ -1777,19 +1820,19 @@
               {searchAllMode ? (
               <>
                 <div style={{position:"relative",marginBottom:14}}>
-                  <div style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"#71767b"}}><SrchI/></div>
+                  <div style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"var(--text-2)"}}><SrchI/></div>
                   <input value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&searchAllPlatforms()}
                     placeholder="Buscar em todas as plataformas…"
-                    style={{width:"100%",padding:"12px 14px 12px 42px",background:"#0a0f14",border:"1px solid #1e2832",borderRadius:10,color:"#e7e9ea",fontSize:14,transition:"border-color .15s"}}
-                    onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="#1e2832"}/>
+                    style={{width:"100%",padding:"12px 14px 12px 42px",background:"var(--bg-input)",border:"1px solid var(--border)",borderRadius:10,color:"var(--text)",fontSize:14,transition:"border-color .15s"}}
+                    onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="var(--border)"}/>
                 </div>
-                <div style={{padding:"10px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:12,color:"#71767b",marginBottom:14,lineHeight:1.6}}>
+                <div style={{padding:"10px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:12,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
                   🌐 Busca a mesma palavra-chave em 𝕏, xHamster, XVideos, xFree e Pornhub, uma plataforma por vez (cada uma leva alguns segundos). Usa a categoria já selecionada em cada plataforma. Sem "carregar mais" neste modo — cada plataforma contribui até {count} resultados.
                 </div>
                 <button onClick={()=>searchAllPlatforms()} disabled={searchingAll||!query.trim()}
                   style={{width:"100%",padding:"12px 0",borderRadius:9999,border:"none",
-                    background:(searchingAll||!query.trim())?"#1e2832":"#1d9bf0",
-                    color:(searchingAll||!query.trim())?"#71767b":"#fff",
+                    background:(searchingAll||!query.trim())?"var(--border)":"#1d9bf0",
+                    color:(searchingAll||!query.trim())?"var(--text-2)":"#fff",
                     fontSize:14,fontWeight:700,cursor:(searchingAll||!query.trim())?"not-allowed":"pointer",
                     display:"flex",alignItems:"center",justifyContent:"center",gap:10,transition:"background .2s"}}>
                   {searchingAll
@@ -1801,9 +1844,9 @@
 
               {/* X-only: search type tabs */}
               {platform==="x"&&(
-                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"#0a0f14",padding:4,borderRadius:10,border:"1px solid #1e2832"}}>
+                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"var(--bg-input)",padding:4,borderRadius:10,border:"1px solid var(--border)"}}>
                   {tabs.map(t=>(
-                    <button key={t.id} onClick={()=>setType(t.id)} style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",background:type===t.id?"rgba(29,155,240,.15)":"transparent",color:type===t.id?"#1d9bf0":"#71767b",fontSize:12,fontWeight:type===t.id?700:400,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5,transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
+                    <button key={t.id} onClick={()=>setType(t.id)} style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",background:type===t.id?"rgba(29,155,240,.15)":"transparent",color:type===t.id?"#1d9bf0":"var(--text-2)",fontSize:12,fontWeight:type===t.id?700:400,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5,transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
                       {t.icon}<span style={{whiteSpace:"nowrap"}}>{t.label}</span>
                     </button>
                   ))}
@@ -1812,12 +1855,12 @@
 
               {/* xFree: mode tabs (Home / Busca) */}
               {platform==="xfree"&&(
-                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"#0a0f14",padding:4,borderRadius:10,border:"1px solid #1e2832"}}>
+                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"var(--bg-input)",padding:4,borderRadius:10,border:"1px solid var(--border)"}}>
                   {[{id:"home",label:"🏠 Home"},{id:"search",label:"🔍 Busca"}].map(t=>(
                     <button key={t.id} onClick={()=>setType(t.id)}
                       style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",
                         background:type===t.id?"rgba(29,155,240,.15)":"transparent",
-                        color:type===t.id?"#1d9bf0":"#71767b",fontSize:12,fontWeight:type===t.id?700:400,
+                        color:type===t.id?"#1d9bf0":"var(--text-2)",fontSize:12,fontWeight:type===t.id?700:400,
                         cursor:"pointer",transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
                       {t.label}
                     </button>
@@ -1828,10 +1871,10 @@
               {/* xFree: category filter (Hétero / Gay / Trans / Tudo) — applies to Home and Busca */}
               {platform==="xfree"&&(
                 <div style={{marginBottom:14}}>
-                  <label style={{fontSize:11,color:"#71767b",display:"block",marginBottom:5}}>Categoria</label>
+                  <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Categoria</label>
                   <select value={xfCategory} onChange={e=>setXfCategory(e.target.value)}
-                    style={{width:"100%",padding:"9px 10px",background:"#0a0f14",border:"1px solid #1e2832",
-                      borderRadius:8,color:"#e7e9ea",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                      borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
                     <option value="straight">❤️ Hétero</option>
                     <option value="gay">🏳️‍🌈 Gay</option>
                     <option value="trans">🏳️‍⚧️ Trans</option>
@@ -1842,12 +1885,12 @@
 
               {/* Pornhub: mode tabs (Home / Busca) */}
               {platform==="pornhub"&&(
-                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"#0a0f14",padding:4,borderRadius:10,border:"1px solid #1e2832"}}>
+                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"var(--bg-input)",padding:4,borderRadius:10,border:"1px solid var(--border)"}}>
                   {[{id:"home",label:"🏠 Home"},{id:"search",label:"🔍 Busca"}].map(t=>(
                     <button key={t.id} onClick={()=>setType(t.id)}
                       style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",
                         background:type===t.id?"rgba(29,155,240,.15)":"transparent",
-                        color:type===t.id?"#1d9bf0":"#71767b",fontSize:12,fontWeight:type===t.id?700:400,
+                        color:type===t.id?"#1d9bf0":"var(--text-2)",fontSize:12,fontWeight:type===t.id?700:400,
                         cursor:"pointer",transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
                       {t.label}
                     </button>
@@ -1858,17 +1901,17 @@
               {/* Pornhub: category filter (Heterossexual / Gay / Sáfica / Trans) — aplica-se a Home e Busca */}
               {platform==="pornhub"&&(
                 <div style={{marginBottom:14}}>
-                  <label style={{fontSize:11,color:"#71767b",display:"block",marginBottom:5}}>Categoria</label>
+                  <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Categoria</label>
                   <select value={phCategory} onChange={e=>setPhCategory(e.target.value)}
-                    style={{width:"100%",padding:"9px 10px",background:"#0a0f14",border:"1px solid #1e2832",
-                      borderRadius:8,color:"#e7e9ea",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                      borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
                     <option value="straight">❤️ Heterossexual</option>
                     <option value="gay">🏳️‍🌈 Gay</option>
                     <option value="sapphic">🏳️‍🌈 Sáfica</option>
                     <option value="trans">🏳️‍⚧️ Trans</option>
                   </select>
                   {phCategory==="trans"&&type==="search"&&(
-                    <div style={{marginTop:8,padding:"10px 12px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:8,fontSize:12,color:"#71767b",lineHeight:1.5}}>
+                    <div style={{marginTop:8,padding:"10px 12px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:8,fontSize:12,color:"var(--text-2)",lineHeight:1.5}}>
                       ℹ️ O Pornhub não tem busca por palavra-chave na categoria Trans — mostrando os vídeos em destaque dessa categoria (a busca digitada é ignorada).
                     </div>
                   )}
@@ -1877,12 +1920,12 @@
 
               {/* xHamster/XVideos: mode tabs (Home / Busca) */}
               {(platform==="xhamster"||platform==="xvideos")&&(
-                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"#0a0f14",padding:4,borderRadius:10,border:"1px solid #1e2832"}}>
+                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"var(--bg-input)",padding:4,borderRadius:10,border:"1px solid var(--border)"}}>
                   {[{id:"home",label:"🏠 Home"},{id:"search",label:"🔍 Busca"}].map(t=>(
                     <button key={t.id} onClick={()=>setType(t.id)}
                       style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",
                         background:type===t.id?"rgba(29,155,240,.15)":"transparent",
-                        color:type===t.id?"#1d9bf0":"#71767b",fontSize:12,fontWeight:type===t.id?700:400,
+                        color:type===t.id?"#1d9bf0":"var(--text-2)",fontSize:12,fontWeight:type===t.id?700:400,
                         cursor:"pointer",transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
                       {t.label}
                     </button>
@@ -1893,16 +1936,16 @@
               {/* xHamster/XVideos: category filter (Heterossexual / Gay / Trans) — aplica-se a Home e Busca */}
               {(platform==="xhamster"||platform==="xvideos")&&(
                 <div style={{marginBottom:14}}>
-                  <label style={{fontSize:11,color:"#71767b",display:"block",marginBottom:5}}>Categoria</label>
+                  <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Categoria</label>
                   <select value={siteCategory} onChange={e=>setSiteCategory(e.target.value)}
-                    style={{width:"100%",padding:"9px 10px",background:"#0a0f14",border:"1px solid #1e2832",
-                      borderRadius:8,color:"#e7e9ea",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                      borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
                     <option value="straight">❤️ Heterossexual</option>
                     <option value="gay">🏳️‍🌈 Gay</option>
                     <option value="trans">🏳️‍⚧️ Trans</option>
                   </select>
                   {platform==="xvideos"&&type==="home"&&(
-                    <div style={{marginTop:8,padding:"10px 12px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:8,fontSize:12,color:"#71767b",lineHeight:1.5}}>
+                    <div style={{marginTop:8,padding:"10px 12px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:8,fontSize:12,color:"var(--text-2)",lineHeight:1.5}}>
                       ℹ️ A Home do XVideos não pagina — mostra sempre o mesmo destaque da categoria (sem "carregar mais").
                     </div>
                   )}
@@ -1912,43 +1955,43 @@
               {/* Query input — hidden while any platform's Home tab is active */}
               {!(platform==="x"&&isHomeFeed)&&!(platform!=="x"&&type==="home")&&(
                 <div style={{position:"relative",marginBottom:14}}>
-                  <div style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"#71767b"}}><SrchI/></div>
+                  <div style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"var(--text-2)"}}><SrchI/></div>
                   <input value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&search()}
                     placeholder={platform==="x"?ph[type]:(platform==="xhamster"?"Buscar no xHamster…":(platform==="xfree"?"Buscar no xFree…":platform==="pornhub"?"Buscar no Pornhub…":"Buscar no XVideos…"))}
-                    style={{width:"100%",padding:"12px 14px 12px 42px",background:"#0a0f14",border:"1px solid #1e2832",borderRadius:10,color:"#e7e9ea",fontSize:14,transition:"border-color .15s"}}
-                    onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="#1e2832"}/>
+                    style={{width:"100%",padding:"12px 14px 12px 42px",background:"var(--bg-input)",border:"1px solid var(--border)",borderRadius:10,color:"var(--text)",fontSize:14,transition:"border-color .15s"}}
+                    onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="var(--border)"}/>
                 </div>
               )}
               {platform==="x"&&isHomeFeed&&(
-                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"#71767b",marginBottom:14,lineHeight:1.6}}>
+                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
                   {type==="home"
                     ? "🏠 Carregará vídeos da aba \"Para você\" do seu feed usando sua sessão autenticada."
                     : "👥 Carregará vídeos da aba \"Seguindo\" (perfis que você segue) usando sua sessão autenticada."}
                 </div>
               )}
               {platform==="xfree"&&type==="home"&&(
-                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"#71767b",marginBottom:14,lineHeight:1.6}}>
-                  🏠 Carregará os vídeos em destaque da home do <strong style={{color:"#8b98a5"}}>xFree.com</strong> (sem necessidade de login).
+                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
+                  🏠 Carregará os vídeos em destaque da home do <strong style={{color:"var(--text-3)"}}>xFree.com</strong> (sem necessidade de login).
                 </div>
               )}
               {platform==="pornhub"&&type==="home"&&(
-                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"#71767b",marginBottom:14,lineHeight:1.6}}>
-                  🏠 Carregará os vídeos em destaque da página principal do <strong style={{color:"#8b98a5"}}>Pornhub</strong> na categoria selecionada (sem necessidade de login).
+                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
+                  🏠 Carregará os vídeos em destaque da página principal do <strong style={{color:"var(--text-3)"}}>Pornhub</strong> na categoria selecionada (sem necessidade de login).
                 </div>
               )}
               {(platform==="xhamster"||platform==="xvideos")&&type==="home"&&(
-                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"#71767b",marginBottom:14,lineHeight:1.6}}>
-                  🏠 Carregará os vídeos em destaque da página principal do <strong style={{color:"#8b98a5"}}>{platform==="xhamster"?"xHamster":"XVideos"}</strong> na categoria selecionada (sem necessidade de login).
+                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
+                  🏠 Carregará os vídeos em destaque da página principal do <strong style={{color:"var(--text-3)"}}>{platform==="xhamster"?"xHamster":"XVideos"}</strong> na categoria selecionada (sem necessidade de login).
                 </div>
               )}
 
               {/* X-only: duration filter */}
               {platform==="x"&&(
                 <div style={{marginBottom:14}}>
-                  <label style={{fontSize:11,color:"#71767b",display:"block",marginBottom:5}}>Duração do vídeo</label>
+                  <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Duração do vídeo</label>
                   <select value={siteDuration} onChange={e=>setSiteDuration(e.target.value)}
-                    style={{width:"100%",padding:"9px 10px",background:"#0a0f14",border:"1px solid #1e2832",
-                      borderRadius:8,color:"#e7e9ea",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                      borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
                     <option value="any">Qualquer duração</option>
                     <option value="short">Curtos (até 10 min)</option>
                     <option value="medium">Médios (10–30 min)</option>
@@ -1961,10 +2004,10 @@
               {platform!=="x"&&platform!=="xfree"&&(
                 <div style={{display:"flex",gap:10,marginBottom:14}}>
                   <div style={{flex:1}}>
-                    <label style={{fontSize:11,color:"#71767b",display:"block",marginBottom:5}}>Ordenar por</label>
+                    <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Ordenar por</label>
                     <select value={siteSort} onChange={e=>setSiteSort(e.target.value)}
-                      style={{width:"100%",padding:"9px 10px",background:"#0a0f14",border:"1px solid #1e2832",
-                        borderRadius:8,color:"#e7e9ea",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                      style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                        borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
                       <option value="relevance">Relevância</option>
                       <option value="newest">Mais recentes</option>
                       <option value="views">Mais vistos</option>
@@ -1973,10 +2016,10 @@
                     </select>
                   </div>
                   <div style={{flex:1}}>
-                    <label style={{fontSize:11,color:"#71767b",display:"block",marginBottom:5}}>Duração</label>
+                    <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Duração</label>
                     <select value={siteDuration} onChange={e=>setSiteDuration(e.target.value)}
-                      style={{width:"100%",padding:"9px 10px",background:"#0a0f14",border:"1px solid #1e2832",
-                        borderRadius:8,color:"#e7e9ea",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                      style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                        borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
                       <option value="any">Qualquer duração</option>
                       <option value="short">Curtos (até 10 min)</option>
                       <option value="medium">Médios (10–30 min)</option>
@@ -2001,8 +2044,8 @@
                 return (
                   <button onClick={()=>search()} disabled={disabled}
                     style={{width:"100%",padding:"12px 0",borderRadius:9999,border:"none",
-                      background:disabled?"#1e2832":"#1d9bf0",
-                      color:disabled?"#71767b":"#fff",
+                      background:disabled?"var(--border)":"#1d9bf0",
+                      color:disabled?"var(--text-2)":"#fff",
                       fontSize:14,fontWeight:700,cursor:disabled?"not-allowed":"pointer",
                       display:"flex",alignItems:"center",justifyContent:"center",gap:10,transition:"background .2s"}}>
                     {searching?<><Spin size={16} color="#fff"/>Buscando…</>:<><SrchI/>{btnLabel}</>}
@@ -2018,13 +2061,13 @@
             {!searchAllMode&&results.length>0&&(
               <div style={{animation:"fadeIn .4s ease"}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:8}}>
-                  <span style={{fontSize:14,color:"#e7e9ea",fontWeight:600}}>{results.length} vídeo{results.length!==1?"s":""} encontrado{results.length!==1?"s":""}</span>
+                  <span style={{fontSize:14,color:"var(--text)",fontWeight:600}}>{results.length} vídeo{results.length!==1?"s":""} encontrado{results.length!==1?"s":""}</span>
                   <div style={{display:"flex",alignItems:"center",gap:12}}>
-                    <span style={{fontSize:12,color:"#71767b"}}>▶ assistir · <DlI/> baixar</span>
+                    <span style={{fontSize:12,color:"var(--text-2)"}}>▶ assistir · <DlI/> baixar</span>
                     <button
                       onClick={checked.size===results.length?clearChecked:selectAll}
-                      style={{background:"none",border:"1px solid #2f3b47",borderRadius:8,
-                        color:"#71767b",fontSize:12,padding:"4px 10px",cursor:"pointer"}}>
+                      style={{background:"none",border:"1px solid var(--border-2)",borderRadius:8,
+                        color:"var(--text-2)",fontSize:12,padding:"4px 10px",cursor:"pointer"}}>
                       {checked.size===results.length?"Desmarcar todos":"Selecionar todos"}
                     </button>
                   </div>
@@ -2040,13 +2083,13 @@
                 {(hasMore||loadingMore)&&(
                   <div style={{display:"flex",justifyContent:"center",marginTop:24}}>
                     <button onClick={loadMore} disabled={loadingMore}
-                      style={{padding:"11px 36px",borderRadius:9999,border:"1px solid #1d9bf0",background:loadingMore?"#0a0f14":"transparent",color:"#1d9bf0",fontSize:14,fontWeight:700,cursor:loadingMore?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:10,transition:"all .2s",opacity:loadingMore?.6:1}}>
+                      style={{padding:"11px 36px",borderRadius:9999,border:"1px solid #1d9bf0",background:loadingMore?"var(--bg-input)":"transparent",color:"#1d9bf0",fontSize:14,fontWeight:700,cursor:loadingMore?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:10,transition:"all .2s",opacity:loadingMore?.6:1}}>
                       {loadingMore?<><Spin size={16} color="#1d9bf0"/>Carregando mais…</>:"⬇ Carregar próximos "+count+" vídeos"}
                     </button>
                   </div>
                 )}
                 {!hasMore&&results.length>0&&!loadingMore&&(
-                  <p style={{textAlign:"center",marginTop:20,fontSize:12,color:"#2f3b47"}}>Fim dos resultados</p>
+                  <p style={{textAlign:"center",marginTop:20,fontSize:12,color:"var(--border-2)"}}>Fim dos resultados</p>
                 )}
               </div>
             )}
@@ -2054,8 +2097,8 @@
             {searchAllMode&&allResults.length>0&&(
               <div style={{animation:"fadeIn .4s ease"}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:8}}>
-                  <span style={{fontSize:14,color:"#e7e9ea",fontWeight:600}}>{allResults.length} vídeo{allResults.length!==1?"s":""} encontrado{allResults.length!==1?"s":""} em {new Set(allResults.map(v=>v._platform)).size} plataforma{new Set(allResults.map(v=>v._platform)).size!==1?"s":""}</span>
-                  <span style={{fontSize:12,color:"#71767b"}}>▶ assistir · <DlI/> baixar</span>
+                  <span style={{fontSize:14,color:"var(--text)",fontWeight:600}}>{allResults.length} vídeo{allResults.length!==1?"s":""} encontrado{allResults.length!==1?"s":""} em {new Set(allResults.map(v=>v._platform)).size} plataforma{new Set(allResults.map(v=>v._platform)).size!==1?"s":""}</span>
+                  <span style={{fontSize:12,color:"var(--text-2)"}}>▶ assistir · <DlI/> baixar</span>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:13}}>
                   {allResults.map((v,i)=><VideoCard key={v._platform+"-"+v.id+"-"+i} video={v}
@@ -2067,16 +2110,16 @@
             )}
 
             {!searchAllMode&&!searching&&results.length===0&&!err&&(
-              <div style={{textAlign:"center",paddingTop:48,color:"#71767b"}}>
+              <div style={{textAlign:"center",paddingTop:48,color:"var(--text-2)"}}>
                 <div style={{fontSize:44,marginBottom:14,opacity:.35}}>🎬</div>
-                <div style={{fontSize:15,fontWeight:500,color:"#2f3b47",marginBottom:6}}>Nenhuma busca realizada</div>
+                <div style={{fontSize:15,fontWeight:500,color:"var(--border-2)",marginBottom:6}}>Nenhuma busca realizada</div>
                 <div style={{fontSize:13}}>Use o painel acima para buscar vídeos</div>
               </div>
             )}
             {searchAllMode&&!searchingAll&&allResults.length===0&&!allErr&&(
-              <div style={{textAlign:"center",paddingTop:48,color:"#71767b"}}>
+              <div style={{textAlign:"center",paddingTop:48,color:"var(--text-2)"}}>
                 <div style={{fontSize:44,marginBottom:14,opacity:.35}}>🌐</div>
-                <div style={{fontSize:15,fontWeight:500,color:"#2f3b47",marginBottom:6}}>Nenhuma busca realizada</div>
+                <div style={{fontSize:15,fontWeight:500,color:"var(--border-2)",marginBottom:6}}>Nenhuma busca realizada</div>
                 <div style={{fontSize:13}}>Digite uma palavra-chave e busque em todas as plataformas de uma vez</div>
               </div>
             )}

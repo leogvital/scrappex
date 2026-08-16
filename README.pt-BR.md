@@ -311,6 +311,16 @@ Uma execução é registrada no histórico de busca como uma única entrada `pla
 
 Validado estendendo o mesmo teste de render headless: trocar pro modo agregado, submeter uma busca, confirmar que exatamente um POST `/api/search` dispara por plataforma (cinco no total, um pra cada x/xhamster/xvideos/xfree/pornhub), confirmar que os resultados das cinco plataformas renderizam juntos com a contagem certa no resumo, e confirmar que a execução vira uma única entrada no histórico.
 
+### Tema claro
+
+Toda cor no app era originalmente um literal hex fixo inline em objetos `style={{...}}` — sem classes CSS, sem sistema de tema, ~1700 linhas. Reescrever cada uma pra ler de um objeto de tema em JS significaria mexer (e arriscar) centenas de blocos de style individuais, e forçaria um re-render completo da árvore a cada troca. Em vez disso, só a **paleta neutra** (11 tokens: fundos de página/card/input/selecionado/hover/placeholder, 2 tons de borda, 3 tons de texto) virou variáveis CSS customizadas — definidas uma única vez num bloco `:root`/`html[data-theme="light"]` na tag `<style>` — e cada ocorrência desses valores hex específicos no resto do arquivo foi substituída mecanicamente pela string `var(--token)` correspondente. Trocar de tema é só inverter um atributo HTML (`document.documentElement.setAttribute("data-theme", ...)`); o próprio cascata CSS do navegador atualiza todo inline style que referencia um token na hora, com zero re-render do React.
+
+Cores de acento/semânticas (o azul da marca, vermelho de erro, verde de sucesso, amarelo de aviso) e suas variantes translúcidas (`rgba(29,155,240,.15)` e afins) foram deixadas propositalmente intocadas nos dois temas — a mesma abordagem que os próprios temas claro e escuro oficiais do X/Twitter usam: azul é azul independente do tema, só os neutros trocam. O `PlayerModal` (o player de vídeo em tela cheia) foi excluído da substituição inteiramente e mantém suas cores escuras literais — uma superfície de "modo cinema" convencionalmente fica escura mesmo em apps com tema claro, e seus controles sobrepostos (barra de progresso, botão de excluir) são estilizados especificamente pra legibilidade contra um fundo preto.
+
+A escolha de tema persiste em `localStorage` (`scrapperx_theme`); o estado vive no `Root` (acima do `App`) pra também se aplicar às telas de login/carregamento renderizadas antes do `App` sequer montar, não só na UI principal. Um `<script>` inline minúsculo roda antes do React carregar e aplica `data-theme="light"` cedo se essa for a escolha salva, evitando um flash de escuro no primeiro paint pra quem usa tema claro — o próprio `useEffect` do `Root` depois normaliza o atributo em todo mount, independente disso.
+
+O contraste foi checado programaticamente (fórmula de luminância relativa do WCAG) em vez de julgado visualmente, já que esse ambiente não tem como renderizar um navegador de verdade: o texto primário tem 18.5:1 contra o fundo do card e 16.6:1 contra o fundo da página (WCAG AAA), o texto secundário tem 6.2:1/5.6:1 (AA), bem acima do mínimo de 4.5:1 pra texto de corpo. Validado de ponta a ponta com o mesmo harness de render headless: o toggle troca o `data-theme` e persiste a escolha em `localStorage`, e trocar de volta restaura o escuro.
+
 ---
 
 ## Download de Vídeos

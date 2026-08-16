@@ -30,6 +30,7 @@ Status do projeto e próximos passos. Mantido junto com o [README.md](README.md)
 - Histórico e favoritos de busca — cada busca bem-sucedida (qualquer plataforma) entra num histórico persistido em `localStorage`; buscas repetidas (mesma plataforma+tipo+query+categoria) se movem pro topo em vez de duplicar; favoritar uma entrada a protege de ser apagada por "Limpar histórico" e sobrevive a re-execuções; clicar numa entrada reconfigura a UI e refaz a busca
 - Busca simultânea em todas as plataformas ("🌐 Tudo") — busca a mesma palavra-chave em 𝕏, xHamster, XVideos, xFree e Pornhub **sequencialmente** (não em paralelo: xHamster/XVideos/Pornhub compartilham um único slot de sessão no backend, `_SITE_SS`, então rodar em paralelo corromperia o estado de paginação de uma pela outra), com os resultados de cada plataforma aparecendo assim que chegam e uma badge indicando a origem de cada card. Sem "carregar mais" nesse modo (cada plataforma contribui até 20 resultados de uma vez) e sem seleção em lote (só play/download individual por card) — limitações conscientes da v1
 - Fila de downloads com pausar/cancelar/retomar — yt-dlp não tem "pausar" nativo, então pausar na prática é: sinalizar o hook de progresso pra abortar (levanta uma exceção, capturada pelo `download_task`) e deixar o arquivo `.part` no disco; retomar é simplesmente chamar `/api/download/start` de novo com a mesma URL/formato — como o nome de saída é determinístico, o yt-dlp encontra o `.part` existente e continua via HTTP Range requests, sem código extra de "resume". Cancelar usa o mesmo sinal, mas some com o `.part` (e `.ytdl`) em vez de preservá-lo; cancelar um download já pausado (sem thread rodando) apaga o arquivo direto na rota, sem precisar sinalizar nada. Controles de pausar/cancelar/retomar disponíveis em qualquer lugar que mostra progresso de download: modal de formato único, modal de download em lote e a bandeja de downloads em background
+- Tema claro — só a paleta neutra (fundos/bordas/texto) é tematizada via variáveis CSS (`:root` = escuro padrão, `html[data-theme="light"]` = claro); cores de acento/semânticas (azul, vermelho, verde, amarelo) e as superfícies sempre-escuras do player em tela cheia (`PlayerModal`) ficam constantes nos dois temas, igual ao próprio tema claro do X/Twitter. Escolha persistida em `localStorage`, um script inline antes do React montar evita flash do tema errado no primeiro carregamento pra quem já escolheu claro
 
 ### Correções de robustez já feitas
 - Bloqueio de TLS fingerprint do Pornhub contra o yt-dlp (via `curl_cffi`)
@@ -66,12 +67,6 @@ Status do projeto e próximos passos. Mantido junto com o [README.md](README.md)
 
 ### Novas plataformas
 - [ ] Definir com o usuário quais sites entram em seguida (candidatos a levantar: outros agregadores com filtro de orientação, sites com API pública, etc.)
-
-### UI/UX
-- [x] Busca simultânea em todas as plataformas de uma vez ("buscar em tudo")
-- [x] Fila de downloads com pausar/cancelar
-- [x] Histórico/favoritos de busca
-- [ ] Tema claro (hoje só existe o escuro)
 
 ### Segurança / operação
 - [ ] Rate limit no `/api/auth/app-login` (proteção básica contra força bruta, mesmo sendo uso pessoal)

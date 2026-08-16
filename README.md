@@ -311,6 +311,16 @@ A run is recorded into search history as one `platform:"all"` entry (not five se
 
 Validated by extending the same headless render test: switching into aggregate mode, submitting a query, confirming exactly one `/api/search` POST fires per platform (five total, one each for x/xhamster/xvideos/xfree/pornhub), confirming results from all five render together with the correct summary count, and confirming the run collapses into a single history entry.
 
+### Light theme
+
+Every color in the app was originally a hardcoded hex literal inline in `style={{...}}` objects — no CSS classes, no theme system, ~1700 lines. Rewriting each one to read from a JS theme object would mean touching (and risking) hundreds of individual style blocks, and would force a full re-render of the tree on every toggle. Instead, only the **neutral palette** (11 tokens: page/card/input/selected/hover/placeholder backgrounds, 2 border shades, 3 text shades) became CSS custom properties — defined once in a `:root`/`html[data-theme="light"]` block in the `<style>` tag — and every occurrence of those specific hex values elsewhere in the file was mechanically replaced with the matching `var(--token)` string. Toggling the theme is just flipping one HTML attribute (`document.documentElement.setAttribute("data-theme", ...)`); the browser's own CSS cascade updates every inline style referencing a token instantly, with zero React re-render.
+
+Accent/semantic colors (the brand blue, danger red, success green, warning yellow) and their translucent tinted variants (`rgba(29,155,240,.15)` and friends) were deliberately left untouched in both themes — same approach X/Twitter's own official light and dark themes use: blue is blue regardless of theme, only the neutrals flip. `PlayerModal` (the fullscreen video player) was excluded from the substitution entirely and keeps its literal dark colors — a "cinema mode" surface conventionally stays dark even in light-themed apps, and its overlaid controls (scrubber, delete button) are styled specifically for legibility against a black backdrop.
+
+The theme choice persists to `localStorage` (`scrapperx_theme`); state lives in `Root` (above `App`) so it also applies to the login/loading screens rendered before `App` ever mounts, not just the main UI. A tiny inline `<script>` runs before React loads and applies `data-theme="light"` early if that's the stored choice, avoiding a flash of dark on first paint for light-theme users — `Root`'s own `useEffect` then normalizes the attribute on every mount regardless.
+
+Contrast was checked programmatically (WCAG relative-luminance formula) rather than eyeballed, since this environment has no way to visually render a browser: primary text is 18.5:1 against the card background and 16.6:1 against the page background (WCAG AAA), secondary text is 6.2:1/5.6:1 (AA), well above the 4.5:1 minimum for body text. Validated end-to-end with the same headless render harness: the toggle switches `data-theme` and persists the choice to `localStorage`, and switching back restores dark.
+
 ---
 
 ## Video Download
