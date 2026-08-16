@@ -293,6 +293,14 @@ Toda a interface está em `index.html` como JSX inline compilado pelo Babel no n
 | `LibraryGrid` | Grid de vídeos baixados |
 | `PlayerModal` | Player fullscreen com seek, play/pause, próximo/anterior, exclusão |
 
+### Histórico e favoritos de busca
+
+Toda busca bem-sucedida (qualquer plataforma, incluindo carregamentos da Home) é registrada em `searchHistory`, persistida em `localStorage` sob `scrapperx_search_history` — o mesmo padrão já usado pro rastreio de downloads em background (`scrapperx_bg_tasks`). Uma entrada do histórico é identificada por `platform+type+query+category`; repetir a mesma busca move ela pro topo em vez de duplicar, e preserva uma marcação de favorito existente em vez de substituí-la por uma entrada nova sem estrela. Entradas não-favoritas são limitadas a `HISTORY_MAX` (30, as mais antigas caem primeiro); favoritas ficam isentas do limite e de "Limpar histórico" (que só apaga entradas não-favoritas).
+
+Clicar numa entrada do histórico (`runHistoryEntry`) precisa tanto atualizar os seletores visíveis de plataforma/tipo/query/categoria quanto disparar a busca na hora — mas setters de estado do React são assíncronos, então `search()` lendo `platform`/`query`/etc. do seu próprio closure ainda veria os valores *anteriores* nessa mesma chamada. Por isso `search()` aceita um objeto `overrides` opcional que tem prioridade sobre o estado atual só nessa invocação, enquanto todo chamador existente (o botão de busca, o `Enter` no campo de query, o efeito de auto-busca na troca de aba) continua chamando `search()` sem argumentos e se comporta exatamente como antes. Uma consequência que vale saber se for mexer nesse código: `search` é chamado diretamente como `onClick={()=>search()}`, nunca cru como `onClick={search}` — o React passaria o `SyntheticEvent` do clique como `overrides` nesse caso, e como eventos carregam uma propriedade `.type` de verdade (`"click"`), `eType` silenciosamente viraria a string `"click"` em vez de cair pro estado.
+
+Validado com um teste de render headless (jsdom + React 18, transformando via Babel o próprio bloco de script do `index.html`) simulando cliques e eventos de input reais de ponta a ponta: abrir o painel de histórico vazio, rodar uma busca e confirmar que ela foi registrada com o rótulo certo, favoritar uma entrada, confirmar que "Limpar histórico" a preserva, e confirmar que clicar numa entrada do histórico dispara um `/api/search` novo com o corpo esperado.
+
 ---
 
 ## Download de Vídeos

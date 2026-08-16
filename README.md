@@ -293,6 +293,14 @@ The entire interface lives in `index.html` as inline JSX compiled by Babel in th
 | `LibraryGrid` | Grid of downloaded videos |
 | `PlayerModal` | Fullscreen player with seek, play/pause, next/previous, delete |
 
+### Search history and favorites
+
+Every successful search (any platform, including Home-feed loads) is recorded into `searchHistory`, persisted to `localStorage` under `scrapperx_search_history` — the same pattern already used for background download tracking (`scrapperx_bg_tasks`). A history entry is identified by `platform+type+query+category`; re-running the same search moves it to the top instead of duplicating, and preserves an existing favorite flag rather than replacing it with a fresh unstarred entry. Non-favorite entries are capped at `HISTORY_MAX` (30, oldest dropped first); favorites are exempt from the cap and from "Limpar histórico" (which only clears non-favorite entries).
+
+Clicking a history entry (`runHistoryEntry`) needs to both update the visible platform/type/query/category selectors *and* fire the search immediately — but React state setters are async, so `search()` reading `platform`/`query`/etc. from its own closure would still see the *previous* values on that same call. `search()` therefore accepts an optional `overrides` object that takes precedence over current state for that one invocation, while every existing caller (the search button, `Enter` in the query field, the auto-search effect on tab change) keeps calling `search()` with no arguments and behaves exactly as before. One consequence worth knowing if touching this code: `search` is called directly as `onClick={()=>search()}`, never bare as `onClick={search}` — React would pass the click's `SyntheticEvent` as `overrides` in that case, and since events carry a real `.type` property (`"click"`), `eType` would silently become the string `"click"` instead of falling back to state.
+
+Validated with a headless render test (jsdom + React 18, Babel-transforming the actual `index.html` script block) driving real DOM clicks/input events end-to-end: opening the empty history panel, running a search and confirming it's recorded with the right label, favoriting an entry, confirming "Limpar histórico" preserves it, and confirming clicking a history entry fires a fresh `/api/search` with the expected body.
+
 ---
 
 ## Video Download

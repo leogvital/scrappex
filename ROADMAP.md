@@ -26,6 +26,9 @@ Status do projeto e próximos passos. Mantido junto com o [README.md](README.md)
 - Downloads em background sobrevivem a fechar o navegador (retomados via `localStorage` ao reabrir)
 - Biblioteca local com player, exclusão e streaming
 
+### UI/UX
+- Histórico e favoritos de busca — cada busca bem-sucedida (qualquer plataforma) entra num histórico persistido em `localStorage`; buscas repetidas (mesma plataforma+tipo+query+categoria) se movem pro topo em vez de duplicar; favoritar uma entrada a protege de ser apagada por "Limpar histórico" e sobrevive a re-execuções; clicar numa entrada reconfigura a UI e refaz a busca
+
 ### Correções de robustez já feitas
 - Bloqueio de TLS fingerprint do Pornhub contra o yt-dlp (via `curl_cffi`)
 - Endpoint de validação de cookies do X descontinuado pela própria X (`verify_credentials.json` → trocado por uma prova real de upload)
@@ -65,7 +68,7 @@ Status do projeto e próximos passos. Mantido junto com o [README.md](README.md)
 ### UI/UX
 - [ ] Busca simultânea em todas as plataformas de uma vez ("buscar em tudo")
 - [ ] Fila de downloads com pausar/cancelar (hoje só cancela fechando a aba)
-- [ ] Histórico/favoritos de busca
+- [x] Histórico/favoritos de busca
 - [ ] Tema claro (hoje só existe o escuro)
 
 ### Segurança / operação
