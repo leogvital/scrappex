@@ -10,6 +10,9 @@ __pycache__/
 # Cookies do X (ficam em /tmp, mas por precaução)
 x_cookies.txt
 
+# Histórico de downloads (dado de runtime, não código-fonte)
+download_history.db
+
 # Ferramentas locais
 .claude/settings.local.json
 

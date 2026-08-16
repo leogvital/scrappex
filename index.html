@@ -92,6 +92,8 @@
 
     const fmt  = s => { if (!s) return "—"; const m=Math.floor(s/60),sc=Math.floor(s%60); return m+":"+sc.toString().padStart(2,"0"); };
     const fmtV = n => { if (!n) return ""; if (n>=1e6) return (n/1e6).toFixed(1)+"M"; if (n>=1e3) return (n/1e3).toFixed(1)+"K"; return n; };
+    const fmtBytes = n => { if (!n) return "?"; if (n>=1e9) return (n/1e9).toFixed(2)+" GB"; if (n>=1e6) return (n/1e6).toFixed(1)+" MB"; return (n/1e3).toFixed(0)+" KB"; };
+    const fmtDate = ts => { if (!ts) return ""; const d=new Date(ts*1000); return d.toLocaleDateString("pt-BR")+" "+d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}); };
 
     // Shared platform label map — used by VideoCard's badge in "buscar em
     // tudo" results and by the search-history labels inside App.
@@ -430,6 +432,13 @@
                   )}
                 </div>
 
+                {/* Already-downloaded badge */}
+                {video.already_downloaded&&(
+                  <div title="Você já baixou este vídeo antes" style={{position:"absolute",top:8,right:8,background:"rgba(249,194,46,.9)",color:"#000",fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:4,letterSpacing:".2px",display:"flex",alignItems:"center",gap:3}}>
+                    ✓ Já baixado
+                  </div>
+                )}
+
                 {/* Duration badge */}
                 {video.duration>0&&(
                   <div style={{position:"absolute",bottom:6,right:6,background:"rgba(0,0,0,.82)",color:"#fff",fontSize:11,padding:"2px 7px",borderRadius:4,fontFamily:"monospace",letterSpacing:".3px"}}>
@@ -513,9 +522,15 @@
         }
       }
 
-      async function startDl(){
-        const r=await fetch(API+"/download/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:video.url,format_id:sel})});
-        const {task_id}=await r.json();
+      async function startDl(force){
+        const r=await fetch(API+"/download/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:video.url,format_id:sel,force:!!force})});
+        const d=await r.json();
+        if(d.already_downloaded){
+          const already = {status:"already_downloaded", info:d.info};
+          setProg(already); progRef.current=already;
+          return;
+        }
+        const task_id = d.task_id;
         taskRef.current = {taskId: task_id, title: video.title||"Vídeo", url: video.url, format_id: sel};
         const initial = {status:"downloading",percent:0};
         setProg(initial); progRef.current=initial;
@@ -582,7 +597,16 @@
                 </div>
               )}
             </div>
-            {prog&&(
+            {prog?.status==="already_downloaded"&&(
+              <div style={{padding:"0 22px 14px"}}>
+                <div style={{background:"rgba(249,194,46,.08)",border:"1px solid rgba(249,194,46,.3)",borderRadius:8,padding:"12px 14px",fontSize:12,color:"var(--text-2)",lineHeight:1.6}}>
+                  ⚠️ Você já baixou este vídeo{prog.info?.downloaded_at?" em "+fmtDate(prog.info.downloaded_at):""}
+                  {prog.info?.filesize_bytes?" ("+fmtBytes(prog.info.filesize_bytes)+")":""}.
+                  {prog.info?.filename&&<> Arquivo: <strong style={{color:"var(--text)"}}>{prog.info.filename}</strong>.</>}
+                </div>
+              </div>
+            )}
+            {prog&&prog.status!=="already_downloaded"&&(
               <div style={{padding:"0 22px 14px"}}>
                 <div style={{background:"var(--bg-input)",borderRadius:8,padding:"12px 14px",border:"1px solid var(--border)"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12,marginBottom:8,gap:8}}>
@@ -614,9 +638,14 @@
               <button onClick={handleClose} style={{flex:1,padding:"10px 0",borderRadius:9999,border:"1px solid var(--border-2)",background:"transparent",color:"var(--text)",fontSize:14,fontWeight:600,cursor:"pointer"}}>
                 {prog?.status==="downloading"||prog?.status==="paused"?"Fechar (bg)":"Cancelar"}
               </button>
-              <button onClick={startDl} disabled={prog?.status==="downloading"} style={{flex:2,padding:"10px 0",borderRadius:9999,border:"none",background:prog?.status==="complete"?"#00ba7c":"#1d9bf0",color:"#fff",fontSize:14,fontWeight:700,cursor:prog?.status==="downloading"?"not-allowed":"pointer",opacity:prog?.status==="downloading"?.6:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,transition:"all .2s"}}>
+              <button onClick={()=>startDl(prog?.status==="already_downloaded")} disabled={prog?.status==="downloading"}
+                style={{flex:2,padding:"10px 0",borderRadius:9999,border:"none",
+                  background:prog?.status==="complete"?"#00ba7c":prog?.status==="already_downloaded"?"#f9c22e":"#1d9bf0",
+                  color:prog?.status==="already_downloaded"?"#000":"#fff",
+                  fontSize:14,fontWeight:700,cursor:prog?.status==="downloading"?"not-allowed":"pointer",opacity:prog?.status==="downloading"?.6:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,transition:"all .2s"}}>
                 {prog?.status==="downloading"?<><Spin size={15} color="#fff"/>Baixando...</>
                  :prog?.status==="paused"?<><DlI/>Retomar</>
+                 :prog?.status==="already_downloaded"?<><DlI/>Baixar mesmo assim</>
                  :<><DlI/>{prog?.status==="complete"?"Baixado!":prog?.status==="cancelled"?"Baixar novamente":"Baixar Vídeo"}</>}
               </button>
             </div>
@@ -672,8 +701,8 @@
       );
     }
 
-    const DL_TERMINAL = ["complete","error","paused","cancelled"]; // no further polling needed
-    const DL_DONE = ["complete","error","cancelled"]; // truly finished — "paused" stays actionable/resumable
+    const DL_TERMINAL = ["complete","error","paused","cancelled","already_downloaded"]; // no further polling needed
+    const DL_DONE = ["complete","error","cancelled","already_downloaded"]; // truly finished — "paused" stays actionable/resumable
 
     function BulkProgressModal({ tasks, onClose }) {
       const [items, setItems]   = useState(() => tasks.map(t=>({...t,taskId:null,prog:{status:"queued",percent:0}})));
@@ -708,8 +737,9 @@
             const r=await fetch(API+"/download/start",{method:"POST",
               headers:{"Content-Type":"application/json"},
               body:JSON.stringify({url:t.url,format_id:t.fmt||"best"})});
-            const {task_id}=await r.json();
-            return {taskId:task_id,prog:{status:"downloading",percent:0}};
+            const d=await r.json();
+            if(d.already_downloaded) return {taskId:null,prog:{status:"already_downloaded",info:d.info}};
+            return {taskId:d.task_id,prog:{status:"downloading",percent:0}};
           }catch{
             return {taskId:null,prog:{status:"error",error:"Falha ao iniciar"}};
           }
@@ -746,7 +776,24 @@
         }catch{}
       }
 
-      const doneCount=items.filter(x=>x.prog.status==="complete").length;
+      // Identified by index rather than taskId — "already downloaded" items
+      // have taskId:null (nothing ever started for them), so several could
+      // collide on that key otherwise.
+      async function forceDownloadItem(i){
+        const item=stRef.current[i];
+        if(!item) return;
+        try{
+          const r=await fetch(API+"/download/start",{method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({url:item.url,format_id:item.fmt||"best",force:true})});
+          const {task_id}=await r.json();
+          const next=[...stRef.current];
+          next[i] = {...item,taskId:task_id,prog:{status:"downloading",percent:0}};
+          stRef.current=next; setItems([...next]);
+          startPolling();
+        }catch{}
+      }
+
+      const doneCount=items.filter(x=>x.prog.status==="complete"||x.prog.status==="already_downloaded").length;
       const allDone=items.every(x=>DL_TERMINAL.includes(x.prog.status));
 
       return (
@@ -776,7 +823,7 @@
             <div style={{flex:1,overflowY:"auto",padding:"14px 22px",display:"flex",flexDirection:"column",gap:10}}>
               {items.map((item,i)=>{
                 const st=item.prog.status;
-                const barColor=st==="error"?"#f4212e":st==="complete"?"#00ba7c":st==="paused"?"#f9c22e":"#1d9bf0";
+                const barColor=st==="error"?"#f4212e":st==="complete"?"#00ba7c":st==="paused"||st==="already_downloaded"?"#f9c22e":"#1d9bf0";
                 return (
                   <div key={i} style={{background:"var(--bg-input)",borderRadius:10,padding:"11px 14px",border:"1px solid var(--border)"}}>
                     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:7}}>
@@ -806,17 +853,23 @@
                           style={{flexShrink:0,background:"none",border:"1px solid #1d9bf0",borderRadius:9999,
                             color:"#1d9bf0",fontSize:11,padding:"3px 9px",cursor:"pointer"}}>▶ Retomar</button>
                       )}
+                      {st==="already_downloaded"&&(
+                        <button onClick={()=>forceDownloadItem(i)} title="Baixar mesmo assim"
+                          style={{flexShrink:0,background:"none",border:"1px solid #f9c22e",borderRadius:9999,
+                            color:"#f9c22e",fontSize:11,padding:"3px 9px",cursor:"pointer"}}>Baixar mesmo assim</button>
+                      )}
                     </div>
                     <div style={{background:"var(--border)",borderRadius:3,height:3,overflow:"hidden",marginBottom:6}}>
                       <div style={{height:"100%",borderRadius:3,transition:"width .3s ease",
                         width:(item.prog.percent||0)+"%",background:barColor}}/>
                     </div>
                     <div style={{display:"flex",justifyContent:"space-between",fontSize:11}}>
-                      <span style={{color:st==="error"?"#f4212e":st==="complete"?"#00ba7c":st==="paused"?"#f9c22e":"var(--text-2)"}}>
+                      <span style={{color:st==="error"?"#f4212e":st==="complete"?"#00ba7c":st==="paused"||st==="already_downloaded"?"#f9c22e":"var(--text-2)"}}>
                         {st==="complete"?"✓ Concluído":
                          st==="error"?"✗ "+(item.prog.error||"Erro"):
                          st==="paused"?"⏸ Pausado":
                          st==="cancelled"?"✗ Cancelado":
+                         st==="already_downloaded"?"⚠️ Já baixado"+(item.prog.info?.filesize_bytes?" ("+fmtBytes(item.prog.info.filesize_bytes)+")":""):
                          st==="queued"?"Aguardando...":
                          "Baixando… "+(item.prog.speed||"")}
                       </span>
@@ -977,30 +1030,55 @@
             {items.length} vídeo{items.length!==1?"s":""} baixado{items.length!==1?"s":""}
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:13}}>
-            {items.map((it,i)=>(
-              <div key={it.name} onClick={()=>onOpen(i)}
-                style={{background:"var(--bg-input)",border:"2px solid var(--border)",borderRadius:12,
-                  overflow:"hidden",cursor:"pointer",transition:"border-color .15s"}}
-                onMouseEnter={e=>e.currentTarget.style.borderColor="#1d9bf0"}
-                onMouseLeave={e=>e.currentTarget.style.borderColor="var(--border)"}>
-                <div style={{position:"relative",paddingTop:"56.25%",background:"var(--bg-card)",
-                  display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                    <div style={{width:52,height:52,borderRadius:"50%",background:"rgba(0,0,0,.72)",
-                      border:"2.5px solid rgba(255,255,255,.9)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                      <PlayI/>
-                    </div>
-                  </div>
-                </div>
-                <div style={{padding:"10px 12px"}}>
-                  <div style={{fontSize:13,fontWeight:500,color:"var(--text)",lineHeight:1.4,
-                    display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",wordBreak:"break-all"}}>
-                    {it.name}
-                  </div>
-                  <div style={{fontSize:11,color:"var(--text-2)",marginTop:3}}>{it.size_mb} MB</div>
-                </div>
+            {items.map((it,i)=><LibraryCard key={it.name} item={it} onOpen={()=>onOpen(i)}/>)}
+          </div>
+        </div>
+      );
+    }
+
+    // Hover-to-play preview using the same local streaming endpoint the
+    // fullscreen PlayerModal uses (/api/library/video/<name>, range-request
+    // capable) — unlike VideoCard's remote-preview flow (which needs a POST
+    // to /api/preview to resolve a playable URL first), a library item's own
+    // file IS already the direct playable URL, so no extra round-trip.
+    // `preload="metadata"` alone makes the browser show the first frame as a
+    // static thumbnail without downloading the whole file, even before hover.
+    function LibraryCard({ item, onOpen }) {
+      const [hov, setHov] = useState(false);
+      const vidRef = useRef(null);
+
+      useEffect(()=>{
+        const v = vidRef.current;
+        if (!v) return;
+        if (hov) { try { v.currentTime = 0; } catch {} v.play().catch(()=>{}); }
+        else v.pause();
+      },[hov]);
+
+      return (
+        <div onClick={onOpen}
+          style={{background:"var(--bg-input)",border:"2px solid var(--border)",borderRadius:12,
+            overflow:"hidden",cursor:"pointer",transition:"border-color .15s"}}
+          onMouseEnter={()=>setHov(true)}
+          onMouseLeave={()=>setHov(false)}>
+          <div style={{position:"relative",paddingTop:"56.25%",background:"#000"}}>
+            <video ref={vidRef} src={API+"/library/video/"+encodeURIComponent(item.name)}
+              muted loop preload="metadata" playsInline
+              style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
+            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
+              background:hov?"transparent":"rgba(0,0,0,.25)",transition:"background .15s",pointerEvents:"none"}}>
+              <div style={{width:52,height:52,borderRadius:"50%",background:"rgba(0,0,0,.72)",
+                border:"2.5px solid rgba(255,255,255,.9)",display:"flex",alignItems:"center",justifyContent:"center",
+                opacity:hov?0:1,transition:"opacity .15s"}}>
+                <PlayI/>
               </div>
-            ))}
+            </div>
+          </div>
+          <div style={{padding:"10px 12px"}}>
+            <div style={{fontSize:13,fontWeight:500,color:"var(--text)",lineHeight:1.4,
+              display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",wordBreak:"break-all"}}>
+              {item.name}
+            </div>
+            <div style={{fontSize:11,color:"var(--text-2)",marginTop:3}}>{item.size_mb} MB</div>
           </div>
         </div>
       );

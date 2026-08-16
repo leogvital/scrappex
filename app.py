@@ -33,6 +33,91 @@ DOWNLOAD_DIR = str(Path.home() / "Downloads" / "X-Videos")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 COOKIES_FILE = os.path.join(tempfile.gettempdir(), "x_cookies.txt")  # Netscape format
 download_progress = {}
+
+# ── Persistent download history ───────────────────────────────────────────────
+# Lives next to app.py (like .flask_secret_key), not under tempfile.gettempdir()
+# — the whole point is remembering a video was already downloaded even long
+# after the file itself was deleted, so it can't live somewhere that gets
+# wiped by a reboot or an OS /tmp cleanup (a real one hit this app's /tmp
+# earlier — see the disk-leak fix in ROADMAP.md).
+DOWNLOAD_HISTORY_DB = os.path.join(
+    os.path.abspath(os.path.dirname(os.path.realpath(__file__))), "download_history.db"
+)
+
+
+def _download_history_conn():
+    # A fresh connection per call rather than one shared across threads —
+    # sqlite3 connections aren't safe to share across threads by default, and
+    # gunicorn runs 4 request threads here (--worker-class gthread). Opening/
+    # closing per call is the standard-safe pattern at this traffic scale.
+    conn = sqlite3.connect(DOWNLOAD_HISTORY_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS downloads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        url TEXT NOT NULL,
+        title TEXT,
+        filename TEXT,
+        filesize_bytes INTEGER,
+        downloaded_at REAL NOT NULL
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_downloads_url ON downloads(url)")
+    return conn
+
+
+def _record_download_history(url, title, filename, filesize_bytes):
+    if not url:
+        return
+    conn = _download_history_conn()
+    try:
+        conn.execute(
+            "INSERT INTO downloads (url, title, filename, filesize_bytes, downloaded_at) VALUES (?,?,?,?,?)",
+            (url, title, filename, filesize_bytes, time.time()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _lookup_download_history(url):
+    """Most recent history entry for `url`, or None. Kept as a history (not
+    one row per url) so downloading the same video again later — including
+    after deleting the file — is still recorded, not silently overwritten."""
+    if not url:
+        return None
+    conn = _download_history_conn()
+    try:
+        row = conn.execute(
+            "SELECT title, filename, filesize_bytes, downloaded_at FROM downloads "
+            "WHERE url=? ORDER BY downloaded_at DESC LIMIT 1",
+            (url,),
+        ).fetchone()
+        if not row:
+            return None
+        return {"title": row[0], "filename": row[1], "filesize_bytes": row[2], "downloaded_at": row[3]}
+    finally:
+        conn.close()
+
+
+def _lookup_download_history_bulk(urls):
+    """Set of urls (from the input) with at least one history entry — one
+    batched query instead of one per result, used to flag search results."""
+    urls = [u for u in urls if u]
+    if not urls:
+        return set()
+    conn = _download_history_conn()
+    try:
+        placeholders = ",".join("?" for _ in urls)
+        rows = conn.execute(f"SELECT DISTINCT url FROM downloads WHERE url IN ({placeholders})", urls).fetchall()
+        return {r[0] for r in rows}
+    finally:
+        conn.close()
+
+
+def _mark_downloaded(results):
+    """Mutates `results` in place, adding already_downloaded:bool to each item."""
+    seen = _lookup_download_history_bulk([r.get("url") for r in results])
+    for r in results:
+        r["already_downloaded"] = r.get("url") in seen
+    return results
 session_state = {"logged_in": False, "username": "", "method": ""}
 
 # ── App-level login (gates the whole app — separate from the X cookie session above) ──
@@ -1795,6 +1880,11 @@ def download_task(task_id, url, format_id, out_dir):
             download_progress[task_id].update({
                 "status": "complete", "filepath": fp, "filename": os.path.basename(fp),
             })
+            try:
+                size = os.path.getsize(fp) if os.path.exists(fp) else 0
+                _record_download_history(url, info.get("title") or os.path.basename(fp), os.path.basename(fp), size)
+            except Exception as ex:
+                print(f"  Erro gravando histórico de download: {ex}")
     except _DownloadPaused:
         # Deliberately leave the .part file on disk — yt-dlp resumes from it via
         # HTTP Range requests when download_task runs again with the same
@@ -1985,7 +2075,7 @@ def search():
                     return jsonify({"error": "Nenhum vídeo encontrado no xfree.com.",
                                     "results": [], "has_more": False})
                 return jsonify({
-                    "results": results, "count": len(results),
+                    "results": _mark_downloaded(results), "count": len(results),
                     "has_more": has_more, "search_id": sid,
                 })
             except _NoResultsError as e:
@@ -2048,7 +2138,7 @@ def search():
         # promoted items across consecutive pages.
         results = [r for r in results if r["id"] not in ss["seen_ids"] and not ss["seen_ids"].add(r["id"])]
         return jsonify({
-            "results": results, "count": len(results),
+            "results": _mark_downloaded(results), "count": len(results),
             "has_more": has_more, "search_id": sid,
         })
 
@@ -2096,7 +2186,7 @@ def search():
                 # but an active account's own feed should always have tweets.
                 _record_scraper_outcome("x", bool(results), context=f"type={t}")
             return jsonify({
-                "results": results, "count": len(results),
+                "results": _mark_downloaded(results), "count": len(results),
                 "has_more": has_more, "search_id": sid,
             })
         except _NoResultsError as e:
@@ -2254,7 +2344,7 @@ def search_more():
         try:
             results, has_more = _xf_fetch_page(page_size)
             return jsonify({
-                "results": results, "count": len(results),
+                "results": _mark_downloaded(results), "count": len(results),
                 "has_more": has_more, "search_id": sid,
             })
         except Exception as e:
@@ -2281,7 +2371,7 @@ def search_more():
                 })
                 results, has_more = _xf_fetch_page(page_size)
                 return jsonify({
-                    "results": results, "count": len(results),
+                    "results": _mark_downloaded(results), "count": len(results),
                     "has_more": has_more, "search_id": sid,
                 })
             except Exception as e2:
@@ -2321,7 +2411,7 @@ def search_more():
         # promoted items across consecutive pages.
         results = [r for r in results if r["id"] not in ss["seen_ids"] and not ss["seen_ids"].add(r["id"])]
         return jsonify({
-            "results": results, "count": len(results),
+            "results": _mark_downloaded(results), "count": len(results),
             "has_more": has_more, "search_id": sid,
         })
 
@@ -2339,7 +2429,7 @@ def search_more():
     try:
         results, has_more = _ss_fetch_page(page_size)
         return jsonify({
-            "results": results, "count": len(results),
+            "results": _mark_downloaded(results), "count": len(results),
             "has_more": has_more, "search_id": sid,
         })
     except Exception as e:
@@ -2364,7 +2454,7 @@ def search_more():
             })
             results, has_more = _ss_fetch_page(page_size)
             return jsonify({
-                "results": results, "count": len(results),
+                "results": _mark_downloaded(results), "count": len(results),
                 "has_more": has_more, "search_id": sid,
             })
         except Exception as e2:
@@ -2431,8 +2521,13 @@ def formats():
 @app.route("/api/download/start", methods=["POST"])
 def start_dl():
     d = request.json or {}
+    url = d.get("url", "")
+    if not d.get("force"):
+        prev = _lookup_download_history(url)
+        if prev:
+            return jsonify({"already_downloaded": True, "info": prev})
     task_id = str(uuid.uuid4())
-    t = threading.Thread(target=download_task, args=(task_id, d.get("url", ""), d.get("format_id", "best"), DOWNLOAD_DIR))
+    t = threading.Thread(target=download_task, args=(task_id, url, d.get("format_id", "best"), DOWNLOAD_DIR))
     t.daemon = True
     t.start()
     return jsonify({"task_id": task_id})
