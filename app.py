@@ -2125,6 +2125,117 @@ def search():
     return jsonify({"error": f"Erro no navegador: {last_err}", "results": [], "has_more": False}), 500
 
 
+# ── Background search tasks ───────────────────────────────────────────────────
+# A fresh search (especially X/xFree via Selenium, or "buscar em tudo" running
+# all 5 platforms one after another) can take from several seconds to over a
+# minute. Previously that whole time lived inside a single blocking fetch() on
+# the client — if the tab got backgrounded (phone screen off, user switches
+# app) mobile browsers throttle or fully suspend JS/networking, and the
+# in-flight request either stalls or is dropped, losing the search entirely.
+# Same fix as downloads: the actual work moves into a server-side thread that
+# keeps running regardless of what the client tab does, tracked in
+# _search_tasks and polled by task_id — /api/search itself is untouched and
+# still works exactly as before for anything that wants a synchronous call.
+_search_tasks = {}
+_SEARCH_TASK_MAX_AGE = 3600  # seconds — stale finished tasks get swept by the watchdog
+_ALL_SEARCH_PLATFORMS = ["x", "xhamster", "xvideos", "xfree", "pornhub"]
+
+
+def _call_search_view(body):
+    """
+    Invoke the existing `search()` view function as if a real POST /api/search
+    request had arrived, without going through actual HTTP — reuses every
+    branch of that function verbatim (xfree/xhamster/xvideos/pornhub/X, retry
+    logic, session bookkeeping, all of it) instead of duplicating any of that
+    logic for background execution. `test_request_context` synthesizes a real
+    Flask request/app context so `request.json` etc. work normally inside;
+    `app.make_response` normalizes whatever the view returned (a bare
+    Response, or a (body, status) tuple) the same way Flask's own dispatcher
+    would for a real request.
+    """
+    with app.test_request_context("/api/search", method="POST", json=body):
+        rv = search()
+        resp = app.make_response(rv)
+        return resp.status_code, resp.get_json()
+
+
+def _run_single_search_task(task_id, body):
+    _search_tasks[task_id] = {"status": "running", "kind": "single", "started": time.time()}
+    try:
+        status_code, resp = _call_search_view(body)
+        is_error = status_code >= 400 or bool(resp.get("error"))
+        _search_tasks[task_id] = {
+            "status": "error" if is_error else "complete",
+            "kind": "single", "body": resp, "finished": time.time(),
+        }
+    except Exception as e:
+        _search_tasks[task_id] = {"status": "error", "kind": "single",
+                                   "body": {"error": f"Erro no navegador: {e}"}, "finished": time.time()}
+
+
+def _body_for_all_platform(platform, d):
+    q = d.get("query", "")
+    count = d.get("count", 20)
+    if platform == "x":
+        return {"query": q, "type": "keyword", "platform": "x", "duration": "any", "count": count}
+    if platform == "xfree":
+        return {"query": q, "platform": "xfree", "type": "search", "category": d.get("xfCategory", "straight"), "count": count}
+    if platform == "pornhub":
+        return {"query": q, "platform": "pornhub", "type": "search", "category": d.get("phCategory", "straight"), "count": count}
+    return {"query": q, "platform": platform, "type": "search", "sort": "relevance", "duration": "any",
+            "category": d.get("siteCategory", "straight"), "count": count}
+
+
+def _run_aggregate_search_task(task_id, d):
+    task = {
+        "status": "running", "kind": "aggregate", "started": time.time(),
+        "results": [], "done": 0, "total": len(_ALL_SEARCH_PLATFORMS), "current": None,
+        "search_ids": {}, "has_more": {},
+    }
+    _search_tasks[task_id] = task
+    any_results = False
+    for i, p in enumerate(_ALL_SEARCH_PLATFORMS):
+        task["current"] = p
+        task["done"] = i
+        try:
+            status_code, resp = _call_search_view(_body_for_all_platform(p, d))
+            if status_code < 400 and not resp.get("error") and resp.get("results"):
+                any_results = True
+                tagged = [{**r, "_platform": p} for r in resp["results"]]
+                task["results"] = task["results"] + tagged
+                task["search_ids"][p] = resp.get("search_id")
+                task["has_more"][p] = bool(resp.get("has_more"))
+        except Exception:
+            pass  # skip this platform, keep going with the rest — same as before
+    task["current"] = None
+    task["done"] = task["total"]
+    task["status"] = "complete"
+    task["finished"] = time.time()
+    if not any_results:
+        task["error"] = "Nenhum vídeo encontrado em nenhuma plataforma."
+
+
+@app.route("/api/search/start", methods=["POST"])
+def search_task_start():
+    d = request.json or {}
+    task_id = str(uuid.uuid4())
+    threading.Thread(target=_run_single_search_task, args=(task_id, d), daemon=True).start()
+    return jsonify({"task_id": task_id})
+
+
+@app.route("/api/search/start_all", methods=["POST"])
+def search_task_start_all():
+    d = request.json or {}
+    task_id = str(uuid.uuid4())
+    threading.Thread(target=_run_aggregate_search_task, args=(task_id, d), daemon=True).start()
+    return jsonify({"task_id": task_id})
+
+
+@app.route("/api/search/task/<tid>")
+def search_task_status(tid):
+    return jsonify(_search_tasks.get(tid, {"status": "not_found"}))
+
+
 @app.route("/api/search/more", methods=["POST"])
 def search_more():
     import time
@@ -2620,6 +2731,14 @@ _WATCHDOG_ORPHAN_AGE  = 900   # seconds — well past any real navigation/search
 
 def _watchdog_sweep():
     now = time.time()
+    try:
+        stale = [tid for tid, t in _search_tasks.items()
+                 if t.get("status") in ("complete", "error") and now - t.get("finished", 0) > _SEARCH_TASK_MAX_AGE]
+        for tid in stale:
+            _search_tasks.pop(tid, None)
+    except Exception as e:
+        print(f"  Watchdog: erro limpando search tasks antigas: {e}")
+
     try:
         if _SS.get("driver") and now - _SS.get("last_used", 0) > _SS_TIMEOUT:
             print("  Watchdog: sessão do X ociosa — encerrando.")

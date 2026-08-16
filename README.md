@@ -245,6 +245,24 @@ Direct HTML page scraping, no headless browser (`_scrape_pornhub`). Two tabs —
 
 ---
 
+## Background Search
+
+A fresh search — especially X/xFree via Selenium, or "buscar em tudo" running all 5 platforms one after another — can take anywhere from a few seconds to well over a minute. That used to mean the whole wait lived inside one blocking `fetch()` on the client; if the tab got backgrounded (phone screen locks, user switches app), mobile browsers throttle or fully suspend JS and networking, and the in-flight request either stalls indefinitely or gets dropped outright, losing the search. Same fix as [background downloads](#video-download): the actual work moves into a server-side thread that keeps running regardless of what the client tab does.
+
+`/api/search/start` and `/api/search/start_all` kick off the real work in a background thread and return a `task_id` immediately; the client polls `GET /api/search/task/<tid>` every 1.5s until it reports `"complete"` or `"error"`. The `task_id` is persisted to `localStorage` (`scrapperx_search_task` / `scrapperx_search_all_task`) while a search is in flight, and a mount-time effect in `App` checks for one and resumes polling if found — closing the tab, or the OS killing a backgrounded one outright, and reopening later reconnects to a search that kept running server-side the entire time, with results ready as soon as it finishes. `/api/search` itself is untouched and still works exactly as before for a synchronous call — nothing was removed, only added.
+
+**Reusing the existing view instead of duplicating it**: `_call_search_view(body)` invokes the existing `search()` Flask view function via `app.test_request_context(...)`, which synthesizes a real request/app context so `request.json` etc. work normally inside — then `app.make_response()` normalizes whatever the view returned (a bare `Response`, or a `(body, status)` tuple, exactly like Flask's own dispatcher would for a real HTTP request) into a consistent `(status_code, dict)` pair. This reuses every branch of the existing search logic (xfree/xhamster/xvideos/pornhub/X, retry logic, session bookkeeping) verbatim from a background thread, rather than re-implementing any of it for async execution.
+
+**The aggregate case moved server-side entirely**, not just wrapped: `_run_aggregate_search_task()` loops through all 5 platforms sequentially *inside the background thread*, calling `_call_search_view()` for each and accumulating tagged results, per-platform `search_id`s, and per-platform `has_more` into the task's state as it goes — mirroring exactly what the old client-side `for` loop used to do, just moved off the tab. This mattered specifically because a client-side `await`-based loop is JS running in the tab, which is exactly what gets suspended when a mobile browser backgrounds it; keeping the loop client-side while only the individual `/api/search` calls became async would have defeated the whole point for the slowest, most-likely-to-be-left-running search mode. A platform that errors doesn't abort the run — the loop just moves on to the next one, same tolerance the old client-side version had.
+
+**Deliberately out of scope**: `/api/search/more` (pagination / "load more") stays synchronous. It's typically fast (one page, not a fresh multi-scroll gather) and triggered by explicit engagement (scrolling near the bottom, or clicking a button) while the user is already looking at results on screen — a different situation from "I started a search and want to walk away," which is what this feature targets.
+
+Finished tasks are swept by the existing watchdog (`_watchdog_sweep`, every 120s) once older than `_SEARCH_TASK_MAX_AGE` (1 hour), the same pattern already used for idle Selenium sessions and orphaned chromedriver processes, so `_search_tasks` doesn't grow unbounded over a long server uptime.
+
+Validated at three levels: a Python test using Flask's test client confirming a background task completes with the right results, an unknown task_id returns `not_found` rather than crashing, the aggregate task accumulates results while tolerating individual platform failures, per-platform `search_id`/`has_more` end up correctly recorded for later "load more", and the watchdog sweep prunes old finished tasks; a headless render test confirming the client starts a task (not a direct search call), persists and clears the `localStorage` entry at the right moments, and populates the UI once polling detects completion, for both single-platform and aggregate search; and a dedicated resume scenario — `localStorage` pre-populated with a pending task *before* the app even mounts, confirming it immediately shows "buscando" on reconnect, stays in that state across polls while the (mocked) task is still running, and renders results once it completes, exactly as if the search had run in the foreground the whole time.
+
+---
+
 ## REST API
 
 | Method | Route | Description |
@@ -263,12 +281,17 @@ Direct HTML page scraping, no headless browser (`_scrape_pornhub`). Two tabs —
 | POST | `/api/upload/finalize` | Finalize upload and wait for processing |
 | POST | `/api/tweet/create` | Publish a tweet with text and/or video |
 | POST | `/api/auth/logout` | End session and delete cookies |
-| POST | `/api/search` | Search videos (first page) |
-| POST | `/api/search/more` | Load next page |
+| POST | `/api/search` | Search videos (first page), synchronous |
+| POST | `/api/search/more` | Load next page, synchronous |
+| POST | `/api/search/start` | Start a single-platform search as a background task |
+| POST | `/api/search/start_all` | Start a "buscar em tudo" (all 5 platforms) search as a background task |
+| GET | `/api/search/task/<tid>` | Poll a background search task's status/results |
 | POST | `/api/preview` | Direct URL for in-browser preview |
 | POST | `/api/formats` | List available formats (yt-dlp) |
 | POST | `/api/download/start` | Start an async download |
 | GET | `/api/download/progress/<tid>` | Download progress |
+| POST | `/api/download/pause/<tid>` | Pause a running download |
+| POST | `/api/download/cancel/<tid>` | Cancel a running or paused download |
 | GET | `/api/download/file/<tid>` | Serve the downloaded file |
 | GET | `/api/library` | List videos in the downloads folder |
 | GET | `/api/library/video/<name>` | Serve a library video (streaming) |

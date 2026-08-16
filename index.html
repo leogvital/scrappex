@@ -1569,6 +1569,27 @@
         } catch {}
       },[]); // eslint-disable-line
 
+      // Same idea, for a search that was still running server-side when the
+      // tab was closed/backgrounded — reconnect to it instead of losing it.
+      useEffect(()=>{
+        try {
+          const saved = JSON.parse(localStorage.getItem(SEARCH_TASK_KEY) || "null");
+          if (saved?.taskId) {
+            setPlatform(saved.meta.platform); setType(saved.meta.type); setQuery(saved.meta.query);
+            setSearching(true);
+            pollSearchTask(saved.taskId, saved.meta);
+          }
+        } catch {}
+        try {
+          const savedAll = JSON.parse(localStorage.getItem(SEARCH_ALL_TASK_KEY) || "null");
+          if (savedAll?.taskId) {
+            setSearchAllMode(true); setQuery(savedAll.query||"");
+            setSearchingAll(true);
+            pollSearchAllTask(savedAll.taskId, savedAll.query||"");
+          }
+        } catch {}
+      },[]); // eslint-disable-line
+
       // Auto-inicia feed ao clicar nas abas Para Você / Seguindo (simula navegador)
       const firstRenderRef = useRef(true);
       useEffect(()=>{
@@ -1598,6 +1619,48 @@
       // category on the very same call, without waiting on React's async state
       // update — the normal button/effect callers pass nothing and fall back to
       // current state exactly as before.
+      // Search runs as a server-side background task (mirrors the download-task
+      // pattern) instead of one blocking fetch — the whole scrape can take from
+      // several seconds (HTTP sites) to over a minute (Selenium/X, "buscar em
+      // tudo"), and a backgrounded/suspended mobile tab could previously drop
+      // an in-flight fetch entirely, losing the search. Now the actual work
+      // keeps running server-side regardless of what the tab does; the client
+      // just polls a task_id, persisted to localStorage so even closing and
+      // reopening the tab (or the OS killing a backgrounded tab outright)
+      // reconnects to a search that kept running the whole time.
+      const SEARCH_TASK_KEY = "scrapperx_search_task";
+      const searchTaskIvRef = useRef(null);
+
+      function pollSearchTask(taskId, meta){
+        if (searchTaskIvRef.current) clearInterval(searchTaskIvRef.current);
+        searchTaskIvRef.current = setInterval(async()=>{
+          try{
+            const t = await (await fetch(API+"/search/task/"+taskId)).json();
+            if (t.status==="not_found"){
+              clearInterval(searchTaskIvRef.current); searchTaskIvRef.current=null;
+              localStorage.removeItem(SEARCH_TASK_KEY);
+              setErr("Sessão de busca perdida (servidor reiniciou?) — faça uma nova busca.");
+              setSearching(false);
+              return;
+            }
+            if (t.status==="running") return; // keep polling
+            clearInterval(searchTaskIvRef.current); searchTaskIvRef.current=null;
+            localStorage.removeItem(SEARCH_TASK_KEY);
+            const d = t.body || {};
+            if (t.status==="error"||d.error){
+              setErr(d.error || "Erro ao buscar.");
+            }else{
+              setResults(d.results||[]);
+              setHasMore(!!d.has_more);
+              setSearchId(d.search_id||null);
+              addToHistory({platform:meta.platform, type:meta.type, query:meta.query, category:meta.category});
+              if(!d.results?.length) setErr("Nenhum vídeo encontrado.");
+            }
+            setSearching(false);
+          }catch{ /* transient poll failure — the interval just tries again next tick */ }
+        }, 1500);
+      }
+
       async function search(overrides){
         const ePlatform = overrides?.platform ?? platform;
         const eType     = overrides?.type     ?? type;
@@ -1620,18 +1683,12 @@
               : ePlatform==="pornhub"
                 ? {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,category:eCategory,count}
                 : {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,sort:siteSort,duration:siteDuration,category:eCategory,count};
-          const r=await fetch(API+"/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-          const d=await r.json();
-          if(d.error) setErr(d.error);
-          else{
-            setResults(d.results||[]);
-            setHasMore(!!d.has_more);
-            setSearchId(d.search_id||null);
-            addToHistory({platform:ePlatform, type:eType, query:eQuery.trim(), category:eCategory});
-            if(!d.results?.length) setErr("Nenhum vídeo encontrado.");
-          }
-        }catch{ setErr("Erro de conexão."); }
-        setSearching(false);
+          const r=await fetch(API+"/search/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+          const {task_id}=await r.json();
+          const meta = {platform:ePlatform, type:eType, query:eQuery.trim(), category:eCategory};
+          localStorage.setItem(SEARCH_TASK_KEY, JSON.stringify({taskId:task_id, meta}));
+          pollSearchTask(task_id, meta);
+        }catch{ setErr("Erro de conexão."); setSearching(false); }
       }
 
       async function loadMore(){
@@ -1671,11 +1728,43 @@
       // ids aren't guaranteed unique across five different platforms.
       const [checkedAll,    setCheckedAll]    = useState(new Set());
 
-      function bodyForAllSearch(p, q){
-        if (p==="x")        return {query:q, type:"keyword", platform:p, duration:"any", count};
-        if (p==="xfree")    return {query:q, platform:p, type:"search", category:xfCategory, count};
-        if (p==="pornhub")  return {query:q, platform:p, type:"search", category:phCategory, count};
-        return {query:q, platform:p, type:"search", sort:"relevance", duration:"any", category:siteCategory, count};
+      // Same server-side background-task pattern as single-platform search
+      // (see search()/pollSearchTask above), but for the aggregate flow the
+      // 5-platform loop itself also had to move server-side (_run_aggregate_
+      // search_task in app.py) — a client-side `for` loop of awaits is JS
+      // running in the tab, which is exactly what gets suspended when a
+      // mobile browser backgrounds the tab, so keeping the loop client-side
+      // would have defeated the whole point for the slowest, most-likely-to-
+      // be-left-running search mode.
+      const SEARCH_ALL_TASK_KEY = "scrapperx_search_all_task";
+      const searchAllTaskIvRef = useRef(null);
+
+      function pollSearchAllTask(taskId, q){
+        if (searchAllTaskIvRef.current) clearInterval(searchAllTaskIvRef.current);
+        searchAllTaskIvRef.current = setInterval(async()=>{
+          try{
+            const t = await (await fetch(API+"/search/task/"+taskId)).json();
+            if (t.status==="not_found"){
+              clearInterval(searchAllTaskIvRef.current); searchAllTaskIvRef.current=null;
+              localStorage.removeItem(SEARCH_ALL_TASK_KEY);
+              setAllErr("Sessão de busca perdida (servidor reiniciou?) — faça uma nova busca.");
+              setSearchingAll(false);
+              return;
+            }
+            // Update incrementally on every poll (running or not) so results
+            // keep streaming in exactly like the old client-side loop did.
+            setAllResults(t.results||[]);
+            setAllProgress({done:t.done||0, total:t.total||ALL_PLATFORMS.length, current:t.current||null});
+            setAllSearchIds(t.search_ids||{});
+            setAllHasMore(t.has_more||{});
+            if (t.status==="running") return;
+            clearInterval(searchAllTaskIvRef.current); searchAllTaskIvRef.current=null;
+            localStorage.removeItem(SEARCH_ALL_TASK_KEY);
+            setSearchingAll(false);
+            if (t.error) setAllErr(t.error);
+            else addToHistory({platform:"all", type:"search", query:q, category:undefined});
+          }catch{ /* transient poll failure — the interval just tries again next tick */ }
+        }, 1500);
       }
 
       async function searchAllPlatforms(qOverride){
@@ -1683,26 +1772,13 @@
         if(!q||searchingAll) return;
         setSearchingAll(true); setAllResults([]); setAllErr("");
         setAllSearchIds({}); setAllHasMore({}); setAllLoadingMore({}); setCheckedAll(new Set());
-        let any = false;
-        for(let i=0;i<ALL_PLATFORMS.length;i++){
-          const p = ALL_PLATFORMS[i];
-          setAllProgress({done:i, total:ALL_PLATFORMS.length, current:p});
-          try{
-            const r = await fetch(API+"/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(bodyForAllSearch(p,q))});
-            const d = await r.json();
-            if(!d.error&&d.results?.length){
-              any = true;
-              const tagged = d.results.map(v=>({...v, _platform:p}));
-              setAllResults(prev=>[...prev, ...tagged]);
-              setAllSearchIds(prev=>({...prev, [p]:d.search_id||null}));
-              setAllHasMore(prev=>({...prev, [p]:!!d.has_more}));
-            }
-          }catch{ /* skip this platform, keep going with the rest */ }
-        }
-        setAllProgress({done:ALL_PLATFORMS.length, total:ALL_PLATFORMS.length, current:null});
-        setSearchingAll(false);
-        if(!any) setAllErr("Nenhum vídeo encontrado em nenhuma plataforma.");
-        else addToHistory({platform:"all", type:"search", query:q, category:undefined});
+        try{
+          const body = {query:q, xfCategory, phCategory, siteCategory, count};
+          const r = await fetch(API+"/search/start_all",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+          const {task_id} = await r.json();
+          localStorage.setItem(SEARCH_ALL_TASK_KEY, JSON.stringify({taskId:task_id, query:q}));
+          pollSearchAllTask(task_id, q);
+        }catch{ setAllErr("Erro de conexão."); setSearchingAll(false); }
       }
 
       async function loadMoreAllPlatform(p){
@@ -1872,7 +1948,7 @@
                     onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="var(--border)"}/>
                 </div>
                 <div style={{padding:"10px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:12,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
-                  🌐 Busca a mesma palavra-chave em 𝕏, xHamster, XVideos, xFree e Pornhub, uma plataforma por vez (cada uma leva alguns segundos). Usa a categoria já selecionada em cada plataforma. Sem "carregar mais" neste modo — cada plataforma contribui até {count} resultados.
+                  🌐 Busca a mesma palavra-chave em 𝕏, xHamster, XVideos, xFree e Pornhub, uma plataforma por vez (cada uma leva alguns segundos). Usa a categoria já selecionada em cada plataforma — {count} resultados por plataforma, com "carregar mais" independente pra cada uma depois. A busca roda no servidor: pode sair do app e voltar depois, o resultado estará pronto.
                 </div>
                 <button onClick={()=>searchAllPlatforms()} disabled={searchingAll||!query.trim()}
                   style={{width:"100%",padding:"12px 0",borderRadius:9999,border:"none",
@@ -2097,6 +2173,11 @@
                   </button>
                 );
               })()}
+              {searching&&(platform==="x"||platform==="xfree")&&(
+                <p style={{fontSize:11,color:"var(--text-2)",textAlign:"center",marginTop:8}}>
+                  A busca roda no servidor — pode sair do app e voltar depois, o resultado estará pronto.
+                </p>
+              )}
               </>)}
             </div>
 

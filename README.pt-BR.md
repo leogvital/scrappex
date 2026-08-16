@@ -245,6 +245,24 @@ Scraping direto da página HTML, sem navegador headless (`_scrape_pornhub`). Dua
 
 ---
 
+## Busca em Background
+
+Uma busca nova — principalmente X/xFree via Selenium, ou "buscar em tudo" rodando as 5 plataformas uma atrás da outra — pode levar de alguns segundos a mais de um minuto. Isso costumava significar que a espera inteira vivia dentro de um único `fetch()` bloqueado no cliente; se a aba fosse pra segundo plano (tela do celular trava, usuário troca de app), navegadores mobile limitam ou suspendem completamente JS e rede, e a requisição em andamento ou trava indefinidamente ou é derrubada de vez, perdendo a busca. Mesma correção dos [downloads em background](#download-de-vídeos): o trabalho de verdade se move pra uma thread do lado do servidor que continua rodando independente do que a aba do cliente faz.
+
+`/api/search/start` e `/api/search/start_all` disparam o trabalho de verdade numa thread em background e devolvem um `task_id` na hora; o cliente faz polling em `GET /api/search/task/<tid>` a cada 1,5s até reportar `"complete"` ou `"error"`. O `task_id` fica salvo em `localStorage` (`scrapperx_search_task` / `scrapperx_search_all_task`) enquanto a busca está rodando, e um efeito no mount do `App` checa se existe um pendente e retoma o polling se achar — fechar a aba, ou o sistema matar uma aba em segundo plano de vez, e reabrir depois reconecta numa busca que continuou rodando no servidor o tempo todo, com o resultado pronto assim que ela termina. O `/api/search` em si continua intocado e funcionando exatamente como antes pra quem quiser uma chamada síncrona — nada foi removido, só adicionado.
+
+**Reaproveitando a view existente em vez de duplicá-la**: `_call_search_view(body)` invoca a view `search()` do Flask já existente via `app.test_request_context(...)`, que sintetiza um request/app context de verdade pra que `request.json` etc. funcionem normalmente por dentro — depois `app.make_response()` normaliza o que quer que a view tenha retornado (um `Response` puro, ou uma tupla `(body, status)`, exatamente como o próprio dispatcher do Flask faria pra uma requisição HTTP real) num par `(status_code, dict)` consistente. Isso reaproveita cada ramo da lógica de busca existente (xfree/xhamster/xvideos/pornhub/X, retry, controle de sessão) tal e qual a partir de uma thread em background, em vez de reimplementar qualquer coisa pra execução assíncrona.
+
+**O caso agregado se moveu inteiramente pro servidor**, não só foi envolvido: `_run_aggregate_search_task()` percorre as 5 plataformas sequencialmente *dentro da thread em background*, chamando `_call_search_view()` pra cada uma e acumulando resultados marcados, `search_id` por plataforma e `has_more` por plataforma no estado da task conforme avança — espelhando exatamente o que o `for` do lado do cliente fazia antes, só que tirado da aba. Isso importava especificamente porque um loop baseado em `await` do lado do cliente é JS rodando na aba, que é exatamente o que fica suspenso quando um navegador mobile coloca a aba em segundo plano; manter o loop do lado do cliente enquanto só as chamadas individuais de `/api/search` viravam assíncronas teria anulado o propósito inteiro pro modo de busca mais lento e mais provável de ficar rodando enquanto o usuário sai. Uma plataforma que dá erro não aborta a execução — o loop simplesmente segue pra próxima, a mesma tolerância que a versão antiga do lado do cliente tinha.
+
+**Propositalmente fora do escopo**: `/api/search/more` (paginação / "carregar mais") continua síncrono. Costuma ser rápido (uma página, não uma nova varredura com múltiplos scrolls) e é disparado com o usuário já engajado, olhando os resultados na tela — uma situação diferente de "comecei uma busca e quero sair", que é o que essa funcionalidade resolve.
+
+Tasks finalizadas são varridas pelo watchdog já existente (`_watchdog_sweep`, a cada 120s) uma vez mais velhas que `_SEARCH_TASK_MAX_AGE` (1 hora), o mesmo padrão já usado pra sessões Selenium ociosas e processos chromedriver órfãos, então `_search_tasks` não cresce sem limite ao longo de um servidor de longa duração.
+
+Validado em três níveis: um teste Python usando o test client do Flask confirmando que uma task em background completa com os resultados certos, um `task_id` desconhecido devolve `not_found` em vez de travar, a task agregada acumula resultados tolerando falhas de plataformas individuais, `search_id`/`has_more` por plataforma acabam registrados corretamente pro "carregar mais" depois, e o watchdog limpa tasks antigas já finalizadas; um teste de render headless confirmando que o cliente inicia uma task (não uma chamada de busca direta), persiste e limpa a entrada do `localStorage` nos momentos certos, e popula a UI assim que o polling detecta a conclusão, tanto pra busca de plataforma única quanto agregada; e um cenário dedicado de retomada — `localStorage` pré-populado com uma task pendente *antes* do app sequer montar, confirmando que ele mostra "buscando" imediatamente ao reconectar, permanece nesse estado durante os polls enquanto a task (simulada) ainda está rodando, e renderiza os resultados assim que ela completa, exatamente como se a busca tivesse rodado em primeiro plano o tempo todo.
+
+---
+
 ## API REST
 
 | Método | Rota | Descrição |
@@ -263,12 +281,17 @@ Scraping direto da página HTML, sem navegador headless (`_scrape_pornhub`). Dua
 | POST | `/api/upload/finalize` | Finaliza upload e aguarda processamento |
 | POST | `/api/tweet/create` | Publica tweet com texto e/ou vídeo |
 | POST | `/api/auth/logout` | Encerrar sessão e apagar cookies |
-| POST | `/api/search` | Buscar vídeos (primeira página) |
-| POST | `/api/search/more` | Carregar próxima página |
+| POST | `/api/search` | Buscar vídeos (primeira página), síncrono |
+| POST | `/api/search/more` | Carregar próxima página, síncrono |
+| POST | `/api/search/start` | Iniciar busca de plataforma única como task em background |
+| POST | `/api/search/start_all` | Iniciar busca "buscar em tudo" (5 plataformas) como task em background |
+| GET | `/api/search/task/<tid>` | Consultar status/resultados de uma task de busca em background |
 | POST | `/api/preview` | URL direta para preview no navegador |
 | POST | `/api/formats` | Listar formatos disponíveis (yt-dlp) |
 | POST | `/api/download/start` | Iniciar download assíncrono |
 | GET | `/api/download/progress/<tid>` | Progresso do download |
+| POST | `/api/download/pause/<tid>` | Pausar um download em andamento |
+| POST | `/api/download/cancel/<tid>` | Cancelar um download em andamento ou pausado |
 | GET | `/api/download/file/<tid>` | Servir arquivo baixado |
 | GET | `/api/library` | Listar vídeos na pasta de downloads |
 | GET | `/api/library/video/<name>` | Servir vídeo da biblioteca (streaming) |
