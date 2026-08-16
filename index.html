@@ -64,6 +64,10 @@
     const fmt  = s => { if (!s) return "—"; const m=Math.floor(s/60),sc=Math.floor(s%60); return m+":"+sc.toString().padStart(2,"0"); };
     const fmtV = n => { if (!n) return ""; if (n>=1e6) return (n/1e6).toFixed(1)+"M"; if (n>=1e3) return (n/1e3).toFixed(1)+"K"; return n; };
 
+    // Shared platform label map — used by VideoCard's badge in "buscar em
+    // tudo" results and by the search-history labels inside App.
+    const PLATFORM_LABEL = {x:"𝕏",xhamster:"xHamster",xvideos:"XVideos",xfree:"xFree",pornhub:"Pornhub",all:"🌐 Tudo"};
+
     const Spin = ({size=20,color="#1d9bf0"}) => (
       <div style={{width:size,height:size,border:"2px solid rgba(255,255,255,0.12)",borderTopColor:color,borderRadius:"50%",animation:"spin .7s linear infinite",flexShrink:0}}/>
     );
@@ -291,7 +295,7 @@
       </svg>
     );
 
-    function VideoCard({ video, onSelect, selected, isChecked, onToggleCheck }) {
+    function VideoCard({ video, onSelect, selected, isChecked, onToggleCheck, showCheckbox=true }) {
       const [pv, setPv]       = useState(null); // null | "loading" | {url, thumbnail?} | {error}
       const [hov, setHov]     = useState(false);
       const [thumbErr, setThumbErr] = useState(false);
@@ -339,16 +343,18 @@
             style={{position:"relative",paddingTop:"56.25%",background:"#0d1117",cursor:"pointer"}}
           >
             {/* ── Multi-select checkbox ── */}
-            <div
-              onClick={e=>{e.stopPropagation();onToggleCheck&&onToggleCheck(video.id);}}
-              style={{position:"absolute",top:8,left:8,zIndex:10,width:22,height:22,
-                borderRadius:5,cursor:"pointer",transition:"all .15s",
-                border:"2px solid "+(isChecked?"#1d9bf0":"rgba(255,255,255,.7)"),
-                background:isChecked?"#1d9bf0":"rgba(0,0,0,.55)",
-                display:"flex",alignItems:"center",justifyContent:"center",
-                boxShadow:"0 1px 6px rgba(0,0,0,.5)"}}>
-              {isChecked&&<svg width="12" height="12" viewBox="0 0 24 24" fill="white"><path d="M20 6L9 17l-5-5"/><polyline points="20 6 9 17 4 12" stroke="white" strokeWidth="3" fill="none" strokeLinecap="round"/></svg>}
-            </div>
+            {showCheckbox&&(
+              <div
+                onClick={e=>{e.stopPropagation();onToggleCheck&&onToggleCheck(video.id);}}
+                style={{position:"absolute",top:8,left:8,zIndex:10,width:22,height:22,
+                  borderRadius:5,cursor:"pointer",transition:"all .15s",
+                  border:"2px solid "+(isChecked?"#1d9bf0":"rgba(255,255,255,.7)"),
+                  background:isChecked?"#1d9bf0":"rgba(0,0,0,.55)",
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                  boxShadow:"0 1px 6px rgba(0,0,0,.5)"}}>
+                {isChecked&&<svg width="12" height="12" viewBox="0 0 24 24" fill="white"><path d="M20 6L9 17l-5-5"/><polyline points="20 6 9 17 4 12" stroke="white" strokeWidth="3" fill="none" strokeLinecap="round"/></svg>}
+              </div>
+            )}
             {hasVideo ? (
               <video
                 ref={vidRef}
@@ -389,6 +395,13 @@
                 {video.duration>0&&(
                   <div style={{position:"absolute",bottom:6,right:6,background:"rgba(0,0,0,.82)",color:"#fff",fontSize:11,padding:"2px 7px",borderRadius:4,fontFamily:"monospace",letterSpacing:".3px"}}>
                     {fmt(video.duration)}
+                  </div>
+                )}
+
+                {/* Platform badge — only set when results come from "buscar em tudo" */}
+                {video._platform&&(
+                  <div style={{position:"absolute",bottom:6,left:6,background:"rgba(29,155,240,.85)",color:"#fff",fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:4,letterSpacing:".2px"}}>
+                    {PLATFORM_LABEL[video._platform]||video._platform}
                   </div>
                 )}
               </>
@@ -1223,12 +1236,11 @@
         try { localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(items)); } catch {}
       }
 
-      const platformNames = {x:"𝕏",xhamster:"xHamster",xvideos:"XVideos",xfree:"xFree",pornhub:"Pornhub"};
       const categoryNames = {straight:"Hétero",gay:"Gay",trans:"Trans",all:"Tudo",sapphic:"Sáfica"};
       const xTypeNames    = {home:"Para Você",following:"Seguindo",keyword:"Palavra-chave",hashtag:"Hashtag",user:"Usuário"};
 
       function historyLabel(h) {
-        const p = platformNames[h.platform] || h.platform;
+        const p = PLATFORM_LABEL[h.platform] || h.platform;
         if (h.platform === "x") {
           const t = xTypeNames[h.type] || h.type;
           return h.query ? `${p} · ${t}: ${h.query}` : `${p} · ${t}`;
@@ -1287,13 +1299,20 @@
       }
 
       function runHistoryEntry(h) {
+        setShowHistory(false);
+        if (h.platform==="all") {
+          setSearchAllMode(true);
+          setQuery(h.query||"");
+          searchAllPlatforms(h.query||"");
+          return;
+        }
+        setSearchAllMode(false);
         setPlatform(h.platform);
         setType(h.type);
         setQuery(h.query||"");
         if (h.platform==="xfree")   setXfCategory(h.category||"straight");
         if (h.platform==="pornhub") setPhCategory(h.category||"straight");
         if (h.platform==="xhamster"||h.platform==="xvideos") setSiteCategory(h.category||"straight");
-        setShowHistory(false);
         search({platform:h.platform, type:h.type, query:h.query||"", category:h.category});
       }
 
@@ -1452,6 +1471,48 @@
         setLoadingMore(false);
       }
 
+      // "Buscar em tudo" — runs the same query against every platform, one at
+      // a time. Sequential on purpose: xHamster/XVideos/Pornhub all share one
+      // backend session slot (_SITE_SS), so firing them concurrently would
+      // have one clobber another's in-progress pagination state.
+      const ALL_PLATFORMS = ["x","xhamster","xvideos","xfree","pornhub"];
+      const [searchAllMode, setSearchAllMode] = useState(false);
+      const [allResults,    setAllResults]    = useState([]);
+      const [searchingAll,  setSearchingAll]  = useState(false);
+      const [allProgress,   setAllProgress]   = useState(null); // {done,total,current} | null
+      const [allErr,        setAllErr]        = useState("");
+
+      function bodyForAllSearch(p, q){
+        if (p==="x")        return {query:q, type:"keyword", platform:p, duration:"any", count};
+        if (p==="xfree")    return {query:q, platform:p, type:"search", category:xfCategory, count};
+        if (p==="pornhub")  return {query:q, platform:p, type:"search", category:phCategory, count};
+        return {query:q, platform:p, type:"search", sort:"relevance", duration:"any", category:siteCategory, count};
+      }
+
+      async function searchAllPlatforms(qOverride){
+        const q = (qOverride ?? query).trim();
+        if(!q||searchingAll) return;
+        setSearchingAll(true); setAllResults([]); setAllErr("");
+        let any = false;
+        for(let i=0;i<ALL_PLATFORMS.length;i++){
+          const p = ALL_PLATFORMS[i];
+          setAllProgress({done:i, total:ALL_PLATFORMS.length, current:p});
+          try{
+            const r = await fetch(API+"/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(bodyForAllSearch(p,q))});
+            const d = await r.json();
+            if(!d.error&&d.results?.length){
+              any = true;
+              const tagged = d.results.map(v=>({...v, _platform:p}));
+              setAllResults(prev=>[...prev, ...tagged]);
+            }
+          }catch{ /* skip this platform, keep going with the rest */ }
+        }
+        setAllProgress({done:ALL_PLATFORMS.length, total:ALL_PLATFORMS.length, current:null});
+        setSearchingAll(false);
+        if(!any) setAllErr("Nenhum vídeo encontrado em nenhuma plataforma.");
+        else addToHistory({platform:"all", type:"search", query:q, category:undefined});
+      }
+
       if(session===null) return <div style={{minHeight:"100vh",background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}><Spin size={36}/></div>;
       if(!session.logged_in) return <AuthScreen onSuccess={()=>fetch(API+"/session").then(r=>r.json()).then(setSession)}/>;
 
@@ -1546,25 +1607,58 @@
             )}
             <div style={{background:"#0d1117",border:"1px solid #1e2832",borderRadius:16,padding:20,marginBottom:26,boxShadow:"0 4px 24px rgba(0,0,0,.3)"}}>
 
-              {/* Platform selector */}
-              <div style={{display:"flex",gap:5,marginBottom:14,background:"#0a0f14",padding:4,borderRadius:10,border:"1px solid #1e2832"}}>
+              {/* Platform selector (includes "🌐 Tudo" — searches every platform at once) */}
+              <div style={{display:"flex",gap:5,marginBottom:14,background:"#0a0f14",padding:4,borderRadius:10,border:"1px solid #1e2832",flexWrap:"wrap"}}>
                 {[
                   {id:"x",        label:"𝕏 (Twitter)"},
                   {id:"xhamster", label:"xHamster"},
                   {id:"xvideos",  label:"XVideos"},
                   {id:"xfree",    label:"xFree"},
                   {id:"pornhub",  label:"Pornhub"},
-                ].map(p=>(
-                  <button key={p.id} onClick={()=>{setPlatform(p.id);setResults([]);setErr("");setSearchId(null);setSiteSort("relevance");setSiteDuration("any");setXfCategory("straight");setPhCategory("straight");setSiteCategory("straight");setType("home");}}
-                    style={{flex:1,padding:"7px 4px",borderRadius:8,border:"none",
-                      background:platform===p.id?"rgba(29,155,240,.15)":"transparent",
-                      color:platform===p.id?"#1d9bf0":"#71767b",
-                      fontSize:12,fontWeight:platform===p.id?700:400,cursor:"pointer",
-                      transition:"all .15s",outline:platform===p.id?"1px solid rgba(29,155,240,.3)":"none"}}>
-                    {p.label}
-                  </button>
-                ))}
+                  {id:"all",      label:"🌐 Tudo"},
+                ].map(p=>{
+                  const active = p.id==="all" ? searchAllMode : (!searchAllMode && platform===p.id);
+                  return (
+                    <button key={p.id} onClick={()=>{
+                        if(p.id==="all"){ setSearchAllMode(true); setAllErr(""); return; }
+                        setSearchAllMode(false);
+                        setPlatform(p.id);setResults([]);setErr("");setSearchId(null);setSiteSort("relevance");setSiteDuration("any");setXfCategory("straight");setPhCategory("straight");setSiteCategory("straight");setType("home");
+                      }}
+                      style={{flex:1,minWidth:70,padding:"7px 4px",borderRadius:8,border:"none",
+                        background:active?"rgba(29,155,240,.15)":"transparent",
+                        color:active?"#1d9bf0":"#71767b",
+                        fontSize:12,fontWeight:active?700:400,cursor:"pointer",
+                        transition:"all .15s",outline:active?"1px solid rgba(29,155,240,.3)":"none"}}>
+                      {p.label}
+                    </button>
+                  );
+                })}
               </div>
+
+              {searchAllMode ? (
+              <>
+                <div style={{position:"relative",marginBottom:14}}>
+                  <div style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"#71767b"}}><SrchI/></div>
+                  <input value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&searchAllPlatforms()}
+                    placeholder="Buscar em todas as plataformas…"
+                    style={{width:"100%",padding:"12px 14px 12px 42px",background:"#0a0f14",border:"1px solid #1e2832",borderRadius:10,color:"#e7e9ea",fontSize:14,transition:"border-color .15s"}}
+                    onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="#1e2832"}/>
+                </div>
+                <div style={{padding:"10px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:12,color:"#71767b",marginBottom:14,lineHeight:1.6}}>
+                  🌐 Busca a mesma palavra-chave em 𝕏, xHamster, XVideos, xFree e Pornhub, uma plataforma por vez (cada uma leva alguns segundos). Usa a categoria já selecionada em cada plataforma. Sem "carregar mais" neste modo — cada plataforma contribui até {count} resultados.
+                </div>
+                <button onClick={()=>searchAllPlatforms()} disabled={searchingAll||!query.trim()}
+                  style={{width:"100%",padding:"12px 0",borderRadius:9999,border:"none",
+                    background:(searchingAll||!query.trim())?"#1e2832":"#1d9bf0",
+                    color:(searchingAll||!query.trim())?"#71767b":"#fff",
+                    fontSize:14,fontWeight:700,cursor:(searchingAll||!query.trim())?"not-allowed":"pointer",
+                    display:"flex",alignItems:"center",justifyContent:"center",gap:10,transition:"background .2s"}}>
+                  {searchingAll
+                    ?<><Spin size={16} color="#fff"/>Buscando {allProgress?.current?PLATFORM_LABEL[allProgress.current]:""}… ({allProgress?.done||0}/{ALL_PLATFORMS.length})</>
+                    :<><SrchI/>Buscar em tudo</>}
+                </button>
+              </>
+              ) : (<>
 
               {/* X-only: search type tabs */}
               {platform==="x"&&(
@@ -1776,11 +1870,13 @@
                   </button>
                 );
               })()}
+              </>)}
             </div>
 
-            {err&&<div style={{background:"rgba(244,33,46,.08)",border:"1px solid rgba(244,33,46,.3)",borderRadius:10,padding:"12px 16px",color:"#f4212e",fontSize:13,marginBottom:22,lineHeight:1.5}}>{err}</div>}
+            {!searchAllMode&&err&&<div style={{background:"rgba(244,33,46,.08)",border:"1px solid rgba(244,33,46,.3)",borderRadius:10,padding:"12px 16px",color:"#f4212e",fontSize:13,marginBottom:22,lineHeight:1.5}}>{err}</div>}
+            {searchAllMode&&allErr&&<div style={{background:"rgba(244,33,46,.08)",border:"1px solid rgba(244,33,46,.3)",borderRadius:10,padding:"12px 16px",color:"#f4212e",fontSize:13,marginBottom:22,lineHeight:1.5}}>{allErr}</div>}
 
-            {results.length>0&&(
+            {!searchAllMode&&results.length>0&&(
               <div style={{animation:"fadeIn .4s ease"}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:8}}>
                   <span style={{fontSize:14,color:"#e7e9ea",fontWeight:600}}>{results.length} vídeo{results.length!==1?"s":""} encontrado{results.length!==1?"s":""}</span>
@@ -1816,11 +1912,33 @@
               </div>
             )}
 
-            {!searching&&results.length===0&&!err&&(
+            {searchAllMode&&allResults.length>0&&(
+              <div style={{animation:"fadeIn .4s ease"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:8}}>
+                  <span style={{fontSize:14,color:"#e7e9ea",fontWeight:600}}>{allResults.length} vídeo{allResults.length!==1?"s":""} encontrado{allResults.length!==1?"s":""} em {new Set(allResults.map(v=>v._platform)).size} plataforma{new Set(allResults.map(v=>v._platform)).size!==1?"s":""}</span>
+                  <span style={{fontSize:12,color:"#71767b"}}>▶ assistir · <DlI/> baixar</span>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:13}}>
+                  {allResults.map((v,i)=><VideoCard key={v._platform+"-"+v.id+"-"+i} video={v}
+                    onSelect={vid=>{setSelVideo(vid);setShowModal(true);}}
+                    selected={selVideo?.id===v.id&&showModal}
+                    showCheckbox={false}/>)}
+                </div>
+              </div>
+            )}
+
+            {!searchAllMode&&!searching&&results.length===0&&!err&&(
               <div style={{textAlign:"center",paddingTop:48,color:"#71767b"}}>
                 <div style={{fontSize:44,marginBottom:14,opacity:.35}}>🎬</div>
                 <div style={{fontSize:15,fontWeight:500,color:"#2f3b47",marginBottom:6}}>Nenhuma busca realizada</div>
                 <div style={{fontSize:13}}>Use o painel acima para buscar vídeos</div>
+              </div>
+            )}
+            {searchAllMode&&!searchingAll&&allResults.length===0&&!allErr&&(
+              <div style={{textAlign:"center",paddingTop:48,color:"#71767b"}}>
+                <div style={{fontSize:44,marginBottom:14,opacity:.35}}>🌐</div>
+                <div style={{fontSize:15,fontWeight:500,color:"#2f3b47",marginBottom:6}}>Nenhuma busca realizada</div>
+                <div style={{fontSize:13}}>Digite uma palavra-chave e busque em todas as plataformas de uma vez</div>
               </div>
             )}
           </>)}

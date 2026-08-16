@@ -301,6 +301,16 @@ Clicar numa entrada do histórico (`runHistoryEntry`) precisa tanto atualizar os
 
 Validado com um teste de render headless (jsdom + React 18, transformando via Babel o próprio bloco de script do `index.html`) simulando cliques e eventos de input reais de ponta a ponta: abrir o painel de histórico vazio, rodar uma busca e confirmar que ela foi registrada com o rótulo certo, favoritar uma entrada, confirmar que "Limpar histórico" a preserva, e confirmar que clicar numa entrada do histórico dispara um `/api/search` novo com o corpo esperado.
 
+### "Buscar em tudo" — buscando em todas as plataformas de uma vez
+
+Um 6º botão no seletor de plataforma, "🌐 Tudo", entra no `searchAllMode`: uma única caixa de busca pesquisa X, xHamster, XVideos, xFree e Pornhub com `searchAllPlatforms()`. Cada chamada `/api/search` de cada plataforma roda **sequencialmente dentro de um `for`, não com `Promise.all`** — isso é proposital, não um esquecimento. Diferente do X e do xFree (cada um com seu próprio dicionário de sessão dedicado, `_SS`/`_XF_SS`), xHamster, XVideos e Pornhub compartilham um único slot de sessão no backend (`_SITE_SS`), já que são scrapers HTTP puros, não Selenium; disparar duas dessas três plataformas ao mesmo tempo faria o `_SITE_SS.update(...)` da segunda resposta atropelar o estado de paginação em andamento da primeira. Rodar tudo sequencialmente evita a questão inteira em vez de decidir caso a caso quais pares de plataforma seriam seguros de paralelizar.
+
+Os resultados vão aparecendo conforme cada plataforma termina (`setAllResults(prev => [...prev, ...tagged])` depois de cada plataforma, não tudo de uma vez no final) em vez de esperar as 5 antes de mostrar qualquer coisa. Cada resultado é marcado com `_platform` na entrada; o `VideoCard` renderiza uma badge pequena a partir de `PLATFORM_LABEL` quando esse campo está presente, e fora isso não muda em nada — o card, o `FormatModal` e todo o fluxo de download sempre dependeram só de `video.url`, nunca do estado `platform` externo, então misturar resultados de cinco plataformas diferentes numa mesma grade não precisou de mudança nenhuma ali. Um corte de escopo proposital da v1: `showCheckbox={false}` nos cards do modo agregado — a seleção em lote lê do estado `checked`/`results` do modo de plataforma única, e conectar isso também pra funcionar contra `allResults` ficou de fora pra manter essa mudança contida; o modo agregado só suporta preview/download individual por card.
+
+Uma execução é registrada no histórico de busca como uma única entrada `platform:"all"` (não cinco separadas) — tanto `historyLabel()` quanto `runHistoryEntry()` tratam esse caso à parte, sendo que o segundo ajusta `searchAllMode` e chama `searchAllPlatforms(qOverride)` do mesmo jeito que entradas de histórico de plataforma única usam `search(overrides)`.
+
+Validado estendendo o mesmo teste de render headless: trocar pro modo agregado, submeter uma busca, confirmar que exatamente um POST `/api/search` dispara por plataforma (cinco no total, um pra cada x/xhamster/xvideos/xfree/pornhub), confirmar que os resultados das cinco plataformas renderizam juntos com a contagem certa no resumo, e confirmar que a execução vira uma única entrada no histórico.
+
 ---
 
 ## Download de Vídeos

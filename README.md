@@ -301,6 +301,16 @@ Clicking a history entry (`runHistoryEntry`) needs to both update the visible pl
 
 Validated with a headless render test (jsdom + React 18, Babel-transforming the actual `index.html` script block) driving real DOM clicks/input events end-to-end: opening the empty history panel, running a search and confirming it's recorded with the right label, favoriting an entry, confirming "Limpar histórico" preserves it, and confirming clicking a history entry fires a fresh `/api/search` with the expected body.
 
+### "Buscar em tudo" — searching every platform at once
+
+A 6th button in the platform selector, "🌐 Tudo", switches into `searchAllMode`: a single query box searches X, xHamster, XVideos, xFree, and Pornhub with `searchAllPlatforms()`. Each platform's `/api/search` call runs **sequentially inside a `for` loop, not `Promise.all`** — this is deliberate, not an oversight. Unlike X and xFree (each with their own dedicated session dict, `_SS`/`_XF_SS`), xHamster, XVideos, and Pornhub all share one backend session slot (`_SITE_SS`) since they're plain HTTP scrapers, not Selenium; firing two of those three concurrently would have the second response's `_SITE_SS.update(...)` clobber the first one's in-flight pagination state. Running everything sequentially sidesteps the question entirely rather than special-casing which platform pairs are actually safe to parallelize.
+
+Results stream in as each platform finishes (`setAllResults(prev => [...prev, ...tagged])` after every platform, not once at the end) rather than waiting for all 5 before showing anything. Each result is tagged with `_platform` on the way in; `VideoCard` renders a small badge from `PLATFORM_LABEL` when that field is present, and is otherwise unaffected — the card, `FormatModal`, and the download flow all only ever depended on `video.url`, never on the outer `platform` state, so mixing results from five different platforms in one grid needed no changes there. One deliberate v1 scope cut: `showCheckbox={false}` on aggregate-mode cards — bulk multi-select reads from the single-platform `checked`/`results` state, and wiring it to also work against `allResults` was left out to keep this change bounded; aggregate mode supports individual preview/download per card only.
+
+A run is recorded into search history as one `platform:"all"` entry (not five separate ones) — `historyLabel()` and `runHistoryEntry()` both special-case it, the latter setting `searchAllMode` and calling `searchAllPlatforms(qOverride)` the same way single-platform history entries use `search(overrides)`.
+
+Validated by extending the same headless render test: switching into aggregate mode, submitting a query, confirming exactly one `/api/search` POST fires per platform (five total, one each for x/xhamster/xvideos/xfree/pornhub), confirming results from all five render together with the correct summary count, and confirming the run collapses into a single history entry.
+
 ---
 
 ## Video Download
