@@ -322,6 +322,18 @@ Validated by extending the same headless render test: switching into aggregate m
 - Supported formats: `best`, up to 1080p, up to 720p, up to 480p
 - Output: `~/Downloads/X-Videos/<title>_<id>.mp4`
 
+### Pause, cancel, and resume
+
+yt-dlp has no native "pause." The trick: yt-dlp's `FileDownloader._hook_progress()` calls every registered `progress_hook` with **no `try/except` around it** — any exception a hook raises propagates straight out of `extract_info()`, uncaught. `download_task()`'s hook checks a per-task `threading.Event` (`_download_control[task_id]["stop"]`) on every call; when set, it raises, and `download_task`'s own `except` blocks distinguish *why* via `_download_control[task_id]["action"]` (`"pause"` vs `"cancel"`, set by `/api/download/pause/<tid>` / `/api/download/cancel/<tid>` right before setting the event):
+
+- **Pause** leaves the `.part` file on disk untouched. **Resume** is nothing more than calling `/api/download/start` again with the same `url`/`format_id` — since `outtmpl` (`%(title)s_%(id)s.%(ext)s`) is deterministic, yt-dlp lands on the exact same destination path, finds the existing `.part` file, and continues via HTTP Range requests using its own default resume behavior (`continuedl=True`) — no custom resume code needed at all.
+- **Cancel** does the same signal, but the `except` handler removes the `.part` (and `.ytdl`, for fragmented downloads) via `_remove_partial_files()`, using the exact filename the hook last reported (`d["filename"]`) — not a directory-wide glob, so a concurrent, unrelated download's partial file is never at risk.
+- Cancelling an **already-paused** task (no thread left to signal — `download_task` already returned, `_download_control[tid]` was popped in its `finally`) is handled as a distinct branch in `/api/download/cancel/<tid>`: it deletes the file recorded in `download_progress[tid]["filename"]` directly, no signaling involved.
+
+Pause/cancel/resume controls appear everywhere download progress is shown — `FormatModal` (single download), `BulkProgressModal` (batch), and `BgTray` (background) — each managing its own polling independently but hitting the same three endpoints. `bgTasks`/`localStorage` (`scrapperx_bg_tasks`) now also persist `url`/`format_id`/`prog` per task (previously just `taskId`/`title`), which is what makes a paused download resumable even after reopening the browser.
+
+Validated with a Python-level test that fakes `yt_dlp.YoutubeDL` to drive the hook directly (no real network): pausing mid-download preserves the `.part` file and records `url`/`format_id` for resume; cancelling mid-download removes it; cancelling an already-paused task removes it through the thread-less path; and re-invoking `download_task` with a paused task's `url`/`format_id` completes normally. Also validated end-to-end through the actual UI with the same headless render harness used for search history: starting a download, pausing it (progress bar and buttons update to a "Pausado" state), resuming it (fires a fresh `/api/download/start` and returns to "Baixando"), and cancelling it (immediately shows "Cancelado").
+
 ### Pornhub needs TLS impersonation
 yt-dlp's native Pornhub extractor gets `403 Forbidden` when downloading the video page — it's a TLS *fingerprint* block (JA3/JA4), not an HTTP-header block (confirmed: the same headers via plain `requests` work fine; only yt-dlp's network stack gets blocked). The fix is making yt-dlp mimic a real Chrome TLS handshake via `curl_cffi`:
 - `setup.sh` installs `curl_cffi` (pinned to `>=0.10,<0.15` — v0.15 breaks the API that yt-dlp `2026.03.17` expects)

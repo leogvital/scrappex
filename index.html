@@ -464,9 +464,11 @@
         clearInterval(iv.current);
         const p = progRef.current;
         const t = taskRef.current;
-        // If download is still running, hand it off to the bg tray
-        if (t && p && p.status!=="complete" && p.status!=="error") {
-          onClose(t);
+        // If download is still running (or paused, resumable later), hand it
+        // off to the bg tray — but not if it was explicitly cancelled, since
+        // there's nothing left to track.
+        if (t && p && p.status!=="complete" && p.status!=="error" && p.status!=="cancelled") {
+          onClose({...t, prog:p});
         } else {
           onClose(null);
         }
@@ -475,17 +477,33 @@
       async function startDl(){
         const r=await fetch(API+"/download/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:video.url,format_id:sel})});
         const {task_id}=await r.json();
-        taskRef.current = {taskId: task_id, title: video.title||"Vídeo"};
+        taskRef.current = {taskId: task_id, title: video.title||"Vídeo", url: video.url, format_id: sel};
         const initial = {status:"downloading",percent:0};
         setProg(initial); progRef.current=initial;
         iv.current=setInterval(async()=>{
           const p=await(await fetch(API+"/download/progress/"+task_id)).json();
           setProg(p); progRef.current=p;
-          if(p.status==="complete"||p.status==="error"){
+          if(p.status==="complete"||p.status==="error"||p.status==="paused"||p.status==="cancelled"){
             clearInterval(iv.current);
             if(p.status==="complete") window.open(API+"/download/file/"+task_id,"_blank");
           }
         },700);
+      }
+
+      async function pauseDl(){
+        const t = taskRef.current;
+        if(!t?.taskId) return;
+        try{ await fetch(API+"/download/pause/"+t.taskId,{method:"POST"}); }catch{}
+        // the running poll interval picks up the "paused" status within 700ms
+      }
+
+      async function cancelDl(){
+        const t = taskRef.current;
+        if(!t?.taskId) return;
+        try{ await fetch(API+"/download/cancel/"+t.taskId,{method:"POST"}); }catch{}
+        clearInterval(iv.current);
+        const cancelled = {status:"cancelled"};
+        setProg(cancelled); progRef.current=cancelled;
       }
 
       const allFmts=[{format_id:"best",label:"Melhor qualidade (auto)",sub:"Seleção automática",size:"—"},
@@ -528,24 +546,39 @@
             {prog&&(
               <div style={{padding:"0 22px 14px"}}>
                 <div style={{background:"#0a0f14",borderRadius:8,padding:"12px 14px",border:"1px solid #1e2832"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:8}}>
-                    <span style={{color:prog.status==="error"?"#f4212e":prog.status==="complete"?"#00ba7c":"#1d9bf0"}}>
-                      {prog.status==="complete"?"✓ Concluído!":prog.status==="error"?"✗ "+prog.error:prog.status==="finished"?"Processando...":"Baixando… "+(prog.speed||"")}
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12,marginBottom:8,gap:8}}>
+                    <span style={{color:prog.status==="error"?"#f4212e":prog.status==="complete"?"#00ba7c":prog.status==="paused"?"#f9c22e":prog.status==="cancelled"?"#71767b":"#1d9bf0"}}>
+                      {prog.status==="complete"?"✓ Concluído!":
+                       prog.status==="error"?"✗ "+prog.error:
+                       prog.status==="paused"?"⏸ Pausado":
+                       prog.status==="cancelled"?"✗ Cancelado":
+                       prog.status==="finished"?"Processando...":
+                       "Baixando… "+(prog.speed||"")}
                     </span>
-                    <span style={{color:"#71767b"}}>{Math.round(prog.percent||0)}%</span>
+                    <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+                      {prog.status==="downloading"&&(
+                        <button onClick={pauseDl} title="Pausar" style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",display:"flex",padding:0,fontSize:13}}>⏸</button>
+                      )}
+                      {(prog.status==="downloading"||prog.status==="paused")&&(
+                        <button onClick={cancelDl} title="Cancelar" style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",display:"flex",padding:0}}><CloseI/></button>
+                      )}
+                      <span style={{color:"#71767b"}}>{Math.round(prog.percent||0)}%</span>
+                    </div>
                   </div>
                   <div style={{background:"#1e2832",borderRadius:4,height:4,overflow:"hidden"}}>
-                    <div style={{height:"100%",width:(prog.percent||0)+"%",background:prog.status==="error"?"#f4212e":prog.status==="complete"?"#00ba7c":"#1d9bf0",borderRadius:4,transition:"width .3s ease"}}/>
+                    <div style={{height:"100%",width:(prog.percent||0)+"%",background:prog.status==="error"?"#f4212e":prog.status==="complete"?"#00ba7c":prog.status==="paused"?"#f9c22e":"#1d9bf0",borderRadius:4,transition:"width .3s ease"}}/>
                   </div>
                 </div>
               </div>
             )}
             <div style={{padding:"13px 22px 18px",borderTop:"1px solid #1e2832",display:"flex",gap:10}}>
               <button onClick={handleClose} style={{flex:1,padding:"10px 0",borderRadius:9999,border:"1px solid #2f3b47",background:"transparent",color:"#e7e9ea",fontSize:14,fontWeight:600,cursor:"pointer"}}>
-                {prog?.status==="downloading"?"Fechar (bg)":"Cancelar"}
+                {prog?.status==="downloading"||prog?.status==="paused"?"Fechar (bg)":"Cancelar"}
               </button>
               <button onClick={startDl} disabled={prog?.status==="downloading"} style={{flex:2,padding:"10px 0",borderRadius:9999,border:"none",background:prog?.status==="complete"?"#00ba7c":"#1d9bf0",color:"#fff",fontSize:14,fontWeight:700,cursor:prog?.status==="downloading"?"not-allowed":"pointer",opacity:prog?.status==="downloading"?.6:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,transition:"all .2s"}}>
-                {prog?.status==="downloading"?<><Spin size={15} color="#fff"/>Baixando...</>:<><DlI/>{prog?.status==="complete"?"Baixado!":"Baixar Vídeo"}</>}
+                {prog?.status==="downloading"?<><Spin size={15} color="#fff"/>Baixando...</>
+                 :prog?.status==="paused"?<><DlI/>Retomar</>
+                 :<><DlI/>{prog?.status==="complete"?"Baixado!":prog?.status==="cancelled"?"Baixar novamente":"Baixar Vídeo"}</>}
               </button>
             </div>
           </div>
@@ -600,10 +633,32 @@
       );
     }
 
+    const DL_TERMINAL = ["complete","error","paused","cancelled"]; // no further polling needed
+    const DL_DONE = ["complete","error","cancelled"]; // truly finished — "paused" stays actionable/resumable
+
     function BulkProgressModal({ tasks, onClose }) {
       const [items, setItems]   = useState(() => tasks.map(t=>({...t,taskId:null,prog:{status:"queued",percent:0}})));
       const stRef               = useRef(null);
       const ivRef               = useRef(null);
+
+      function startPolling(){
+        if (ivRef.current) return;
+        ivRef.current=setInterval(async()=>{
+          const cur=stRef.current;
+          const next=await Promise.all(cur.map(async item=>{
+            if(!item.taskId||DL_TERMINAL.includes(item.prog.status)) return item;
+            try{
+              const p=await(await fetch(API+"/download/progress/"+item.taskId)).json();
+              return {...item,prog:p};
+            }catch{ return item; }
+          }));
+          stRef.current=next;
+          setItems([...next]);
+          if(next.every(x=>DL_TERMINAL.includes(x.prog.status))){
+            clearInterval(ivRef.current); ivRef.current=null;
+          }
+        },900);
+      }
 
       useEffect(()=>{
         stRef.current = tasks.map(t=>({...t,taskId:null,prog:{status:"queued",percent:0}}));
@@ -623,29 +678,37 @@
           const upd=stRef.current.map((item,i)=>({...item,...results[i]}));
           stRef.current=upd;
           setItems([...upd]);
-
-          // Poll all active tasks
-          ivRef.current=setInterval(async()=>{
-            const cur=stRef.current;
-            const next=await Promise.all(cur.map(async item=>{
-              if(!item.taskId||item.prog.status==="complete"||item.prog.status==="error") return item;
-              try{
-                const p=await(await fetch(API+"/download/progress/"+item.taskId)).json();
-                return {...item,prog:p};
-              }catch{ return item; }
-            }));
-            stRef.current=next;
-            setItems([...next]);
-            if(next.every(x=>x.prog.status==="complete"||x.prog.status==="error"))
-              clearInterval(ivRef.current);
-          },900);
+          startPolling();
         });
 
         return ()=>clearInterval(ivRef.current);
       },[]);
 
+      async function pauseItem(taskId){
+        try{ await fetch(API+"/download/pause/"+taskId,{method:"POST"}); }catch{}
+      }
+
+      async function cancelItem(taskId){
+        try{ await fetch(API+"/download/cancel/"+taskId,{method:"POST"}); }catch{}
+        const next=stRef.current.map(x=>x.taskId===taskId?{...x,prog:{status:"cancelled"}}:x);
+        stRef.current=next; setItems([...next]);
+      }
+
+      async function resumeItem(taskId){
+        const item=stRef.current.find(x=>x.taskId===taskId);
+        if(!item) return;
+        try{
+          const r=await fetch(API+"/download/start",{method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({url:item.url,format_id:item.fmt||"best"})});
+          const {task_id}=await r.json();
+          const next=stRef.current.map(x=>x.taskId===taskId?{...x,taskId:task_id,prog:{status:"downloading",percent:0}}:x);
+          stRef.current=next; setItems([...next]);
+          startPolling();
+        }catch{}
+      }
+
       const doneCount=items.filter(x=>x.prog.status==="complete").length;
-      const allDone=items.every(x=>x.prog.status==="complete"||x.prog.status==="error");
+      const allDone=items.every(x=>DL_TERMINAL.includes(x.prog.status));
 
       return (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.78)",display:"flex",
@@ -665,7 +728,7 @@
               </div>
               <button onClick={()=>{
                   clearInterval(ivRef.current);
-                  const running=stRef.current.filter(x=>x.taskId&&x.prog.status!=="complete"&&x.prog.status!=="error").map(x=>({taskId:x.taskId,title:x.title}));
+                  const running=stRef.current.filter(x=>x.taskId&&!DL_DONE.includes(x.prog.status)).map(x=>({taskId:x.taskId,title:x.title,url:x.url,format_id:x.fmt,prog:x.prog}));
                   onClose(running.length?running:null);
                 }} style={{background:"none",border:"none",color:"#71767b",cursor:"pointer",display:"flex"}}><CloseI/></button>
             </div>
@@ -674,7 +737,7 @@
             <div style={{flex:1,overflowY:"auto",padding:"14px 22px",display:"flex",flexDirection:"column",gap:10}}>
               {items.map((item,i)=>{
                 const st=item.prog.status;
-                const barColor=st==="error"?"#f4212e":st==="complete"?"#00ba7c":"#1d9bf0";
+                const barColor=st==="error"?"#f4212e":st==="complete"?"#00ba7c":st==="paused"?"#f9c22e":"#1d9bf0";
                 return (
                   <div key={i} style={{background:"#0a0f14",borderRadius:10,padding:"11px 14px",border:"1px solid #1e2832"}}>
                     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:7}}>
@@ -689,15 +752,32 @@
                           Salvar
                         </button>
                       )}
+                      {st==="downloading"&&item.taskId&&(
+                        <button onClick={()=>pauseItem(item.taskId)} title="Pausar"
+                          style={{flexShrink:0,background:"none",border:"1px solid #2f3b47",borderRadius:9999,
+                            color:"#71767b",fontSize:11,padding:"3px 9px",cursor:"pointer"}}>⏸</button>
+                      )}
+                      {(st==="downloading"||st==="paused")&&item.taskId&&(
+                        <button onClick={()=>cancelItem(item.taskId)} title="Cancelar"
+                          style={{flexShrink:0,background:"none",border:"1px solid #2f3b47",borderRadius:9999,
+                            color:"#71767b",fontSize:11,padding:"3px 9px",cursor:"pointer"}}>✕</button>
+                      )}
+                      {st==="paused"&&item.taskId&&(
+                        <button onClick={()=>resumeItem(item.taskId)} title="Retomar"
+                          style={{flexShrink:0,background:"none",border:"1px solid #1d9bf0",borderRadius:9999,
+                            color:"#1d9bf0",fontSize:11,padding:"3px 9px",cursor:"pointer"}}>▶ Retomar</button>
+                      )}
                     </div>
                     <div style={{background:"#1e2832",borderRadius:3,height:3,overflow:"hidden",marginBottom:6}}>
                       <div style={{height:"100%",borderRadius:3,transition:"width .3s ease",
                         width:(item.prog.percent||0)+"%",background:barColor}}/>
                     </div>
                     <div style={{display:"flex",justifyContent:"space-between",fontSize:11}}>
-                      <span style={{color:st==="error"?"#f4212e":st==="complete"?"#00ba7c":"#71767b"}}>
+                      <span style={{color:st==="error"?"#f4212e":st==="complete"?"#00ba7c":st==="paused"?"#f9c22e":"#71767b"}}>
                         {st==="complete"?"✓ Concluído":
                          st==="error"?"✗ "+(item.prog.error||"Erro"):
+                         st==="paused"?"⏸ Pausado":
+                         st==="cancelled"?"✗ Cancelado":
                          st==="queued"?"Aguardando...":
                          "Baixando… "+(item.prog.speed||"")}
                       </span>
@@ -716,7 +796,7 @@
               </span>
               <button onClick={()=>{
                   clearInterval(ivRef.current);
-                  const running=stRef.current.filter(x=>x.taskId&&x.prog.status!=="complete"&&x.prog.status!=="error").map(x=>({taskId:x.taskId,title:x.title}));
+                  const running=stRef.current.filter(x=>x.taskId&&!DL_DONE.includes(x.prog.status)).map(x=>({taskId:x.taskId,title:x.title,url:x.url,format_id:x.fmt,prog:x.prog}));
                   onClose(running.length?running:null);
                 }}
                 style={{padding:"9px 24px",borderRadius:9999,border:"1px solid #2f3b47",
@@ -731,20 +811,24 @@
 
     // ── Main App ──────────────────────────────────────────────────────────
     // ── Background download tray ──────────────────────────────────────────────
-    function BgTray({ tasks, onClear }) {
+    function BgTray({ tasks, onClear, onPause, onCancel, onResume }) {
       const [open, setOpen] = useState(false);
       const active  = tasks.filter(t=>t.prog.status==="downloading"||t.prog.status==="queued"||t.prog.status==="finished");
       const done    = tasks.filter(t=>t.prog.status==="complete");
       const errors  = tasks.filter(t=>t.prog.status==="error");
+      const paused  = tasks.filter(t=>t.prog.status==="paused");
+      const cancelled = tasks.filter(t=>t.prog.status==="cancelled");
       const allDone = tasks.length>0 && active.length===0;
       const pct     = tasks.length ? Math.round(tasks.reduce((s,t)=>s+(t.prog.percent||0),0)/tasks.length) : 0;
 
       if (!tasks.length) return null;
 
-      const pillBg  = allDone ? "#00ba7c" : "#1d9bf0";
-      const pillTxt = allDone
-        ? `✓ ${done.length} concluído${done.length!==1?"s":""}`
-        : `${active.length} baixando • ${pct}%`;
+      const pillBg  = active.length>0 ? "#1d9bf0" : paused.length>0 ? "#f9c22e" : "#00ba7c";
+      const pillTxt = active.length>0
+        ? `${active.length} baixando • ${pct}%`
+        : paused.length>0
+          ? `⏸ ${paused.length} pausado${paused.length!==1?"s":""}`
+          : `✓ ${done.length} concluído${done.length!==1?"s":""}`;
 
       return (
         <div style={{position:"fixed",bottom:20,right:20,zIndex:500,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:8}}>
@@ -759,10 +843,10 @@
               <div style={{maxHeight:320,overflowY:"auto",padding:"10px 14px",display:"flex",flexDirection:"column",gap:8}}>
                 {tasks.map((item,i)=>{
                   const st=item.prog.status;
-                  const clr=st==="error"?"#f4212e":st==="complete"?"#00ba7c":"#1d9bf0";
+                  const clr=st==="error"?"#f4212e":st==="complete"?"#00ba7c":st==="paused"?"#f9c22e":"#1d9bf0";
                   return (
                     <div key={i} style={{background:"#0a0f14",borderRadius:9,padding:"9px 12px",border:"1px solid #1e2832"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
                         <div style={{flex:1,fontSize:12,color:"#e7e9ea",fontWeight:500,
                           overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                           {item.title||"Vídeo"}
@@ -774,6 +858,21 @@
                             Abrir
                           </button>
                         )}
+                        {st==="downloading"&&item.taskId&&onPause&&(
+                          <button onClick={()=>onPause(item.taskId)} title="Pausar"
+                            style={{flexShrink:0,background:"none",border:"1px solid #2f3b47",borderRadius:9999,
+                              color:"#71767b",fontSize:10,padding:"2px 7px",cursor:"pointer"}}>⏸</button>
+                        )}
+                        {(st==="downloading"||st==="paused")&&item.taskId&&onCancel&&(
+                          <button onClick={()=>onCancel(item.taskId)} title="Cancelar"
+                            style={{flexShrink:0,background:"none",border:"1px solid #2f3b47",borderRadius:9999,
+                              color:"#71767b",fontSize:10,padding:"2px 7px",cursor:"pointer"}}>✕</button>
+                        )}
+                        {st==="paused"&&item.taskId&&onResume&&(
+                          <button onClick={()=>onResume(item.taskId)} title="Retomar"
+                            style={{flexShrink:0,background:"none",border:"1px solid #1d9bf0",borderRadius:9999,
+                              color:"#1d9bf0",fontSize:10,padding:"2px 7px",cursor:"pointer"}}>▶</button>
+                        )}
                       </div>
                       <div style={{background:"#1e2832",borderRadius:3,height:3,overflow:"hidden",marginBottom:4}}>
                         <div style={{height:"100%",borderRadius:3,width:(item.prog.percent||0)+"%",background:clr,transition:"width .3s ease"}}/>
@@ -781,6 +880,7 @@
                       <div style={{display:"flex",justifyContent:"space-between",fontSize:11}}>
                         <span style={{color:clr}}>
                           {st==="complete"?"✓ Concluído":st==="error"?"✗ "+(item.prog.error||"Erro"):
+                           st==="paused"?"⏸ Pausado":st==="cancelled"?"✗ Cancelado":
                            st==="queued"?"Aguardando…":"Baixando… "+(item.prog.speed||"")}
                         </span>
                         <span style={{color:"#71767b"}}>{Math.round(item.prog.percent||0)}%</span>
@@ -789,7 +889,7 @@
                   );
                 })}
               </div>
-              {(done.length>0||errors.length>0)&&(
+              {(done.length>0||errors.length>0||cancelled.length>0)&&(
                 <div style={{padding:"10px 14px",borderTop:"1px solid #1e2832",display:"flex",justifyContent:"flex-end"}}>
                   <button onClick={onClear}
                     style={{background:"none",border:"1px solid #2f3b47",borderRadius:8,
@@ -1327,22 +1427,21 @@
 
       function saveBgToStorage(items) {
         try {
-          const pending = items.filter(t=>t.prog.status!=="complete"&&t.prog.status!=="error");
-          localStorage.setItem(BG_STORAGE_KEY, JSON.stringify(pending.map(t=>({taskId:t.taskId,title:t.title}))));
+          // "Paused" is kept (with its prog) so a resumable download survives a
+          // reload — only truly-finished statuses (DL_DONE) get dropped.
+          const pending = items.filter(t=>!DL_DONE.includes(t.prog.status));
+          localStorage.setItem(BG_STORAGE_KEY, JSON.stringify(
+            pending.map(t=>({taskId:t.taskId,title:t.title,url:t.url,format_id:t.format_id,prog:t.prog}))
+          ));
         } catch {}
       }
 
-      function addBgTasks(newItems) {
-        // newItems: [{taskId, title}]
-        const items = newItems.map(t=>({taskId:t.taskId,title:t.title,prog:{status:"downloading",percent:0}}));
-        bgRef.current = [...bgRef.current, ...items];
-        setBgTasks([...bgRef.current]);
-        saveBgToStorage(bgRef.current);
+      function startBgPolling() {
         if (bgIvRef.current) return;
         bgIvRef.current = setInterval(async()=>{
           const cur = bgRef.current;
           const next = await Promise.all(cur.map(async item=>{
-            if (!item.taskId||item.prog.status==="complete"||item.prog.status==="error") return item;
+            if (!item.taskId||DL_TERMINAL.includes(item.prog.status)) return item;
             try{
               const p=await(await fetch(API+"/download/progress/"+item.taskId)).json();
               if (p.status==="not_found") return {...item,prog:{status:"error",error:"Tarefa não encontrada (servidor reiniciou?)"}};
@@ -1352,14 +1451,54 @@
           bgRef.current = next;
           setBgTasks([...next]);
           saveBgToStorage(next);
-          if (next.every(x=>x.prog.status==="complete"||x.prog.status==="error")){
+          if (next.every(x=>DL_TERMINAL.includes(x.prog.status))){
             clearInterval(bgIvRef.current); bgIvRef.current=null;
           }
         }, 1000);
       }
 
+      function addBgTasks(newItems) {
+        // newItems: [{taskId, title, url?, format_id?, prog?}] — prog defaults to
+        // "downloading" for a freshly-started task, but a hand-off from a paused
+        // FormatModal/BulkProgressModal passes its actual current prog through.
+        const items = newItems.map(t=>({taskId:t.taskId,title:t.title,url:t.url,format_id:t.format_id,
+          prog: t.prog || {status:"downloading",percent:0}}));
+        bgRef.current = [...bgRef.current, ...items];
+        setBgTasks([...bgRef.current]);
+        saveBgToStorage(bgRef.current);
+        startBgPolling();
+      }
+
+      async function pauseBgTask(taskId) {
+        try{ await fetch(API+"/download/pause/"+taskId,{method:"POST"}); }catch{}
+        // the running poll interval (1s) picks up the "paused" status on its own
+      }
+
+      async function cancelBgTask(taskId) {
+        try{ await fetch(API+"/download/cancel/"+taskId,{method:"POST"}); }catch{}
+        const next = bgRef.current.map(item=>item.taskId===taskId?{...item,prog:{status:"cancelled"}}:item);
+        bgRef.current = next;
+        setBgTasks([...next]);
+        saveBgToStorage(next);
+      }
+
+      async function resumeBgTask(taskId) {
+        const item = bgRef.current.find(x=>x.taskId===taskId);
+        if (!item?.url) return;
+        try{
+          const r = await fetch(API+"/download/start",{method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({url:item.url, format_id:item.format_id||"best"})});
+          const {task_id} = await r.json();
+          const next = bgRef.current.map(x=>x.taskId===taskId?{...x,taskId:task_id,prog:{status:"downloading",percent:0}}:x);
+          bgRef.current = next;
+          setBgTasks([...next]);
+          saveBgToStorage(next);
+          startBgPolling();
+        }catch{}
+      }
+
       function clearCompletedBg() {
-        const remaining = bgRef.current.filter(d=>d.prog.status!=="complete"&&d.prog.status!=="error");
+        const remaining = bgRef.current.filter(d=>!DL_DONE.includes(d.prog.status));
         bgRef.current = remaining;
         setBgTasks([...remaining]);
         saveBgToStorage(remaining);
@@ -1975,7 +2114,7 @@
               onDelete={deleteCurrentVideo}/>
           )}
 
-          <BgTray tasks={bgTasks} onClear={clearCompletedBg}/>
+          <BgTray tasks={bgTasks} onClear={clearCompletedBg} onPause={pauseBgTask} onCancel={cancelBgTask} onResume={resumeBgTask}/>
 
           {showPost&&<PostModal onClose={()=>setShowPost(false)}/>}
         </div>

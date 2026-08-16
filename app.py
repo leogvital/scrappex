@@ -1643,10 +1643,43 @@ def get_video_formats(url):
     return None
 
 
+# Live tasks only: task_id -> {"stop": threading.Event(), "action": "pause"|"cancel", "filename": str|None}.
+# Popped once download_task's thread exits (paused/cancelled/complete/error alike) —
+# a paused task has no entry here, since nothing is running for it anymore; its
+# resumable state lives in download_progress instead (see _resume_hint below).
+_download_control = {}
+
+
+class _DownloadPaused(Exception):
+    pass
+
+
+class _DownloadCancelledByUser(Exception):
+    pass
+
+
+def _remove_partial_files(filename):
+    """Best-effort delete of a yt-dlp destination file and its .part/.ytdl siblings."""
+    if not filename:
+        return
+    for candidate in (filename, filename + ".part", filename + ".ytdl"):
+        try:
+            if os.path.exists(candidate):
+                os.remove(candidate)
+        except Exception:
+            pass
+
+
 def download_task(task_id, url, format_id, out_dir):
     download_progress[task_id] = {"status": "downloading", "percent": 0}
+    ctrl = {"stop": threading.Event(), "action": None, "filename": None}
+    _download_control[task_id] = ctrl
 
     def hook(d):
+        if d.get("filename"):
+            ctrl["filename"] = d["filename"]
+        if ctrl["stop"].is_set():
+            raise (_DownloadCancelledByUser if ctrl["action"] == "cancel" else _DownloadPaused)()
         if d["status"] == "downloading":
             try:
                 pct = float(d.get("_percent_str", "0%").strip().replace("%", ""))
@@ -1681,8 +1714,20 @@ def download_task(task_id, url, format_id, out_dir):
             download_progress[task_id].update({
                 "status": "complete", "filepath": fp, "filename": os.path.basename(fp),
             })
+    except _DownloadPaused:
+        # Deliberately leave the .part file on disk — yt-dlp resumes from it via
+        # HTTP Range requests when download_task runs again with the same
+        # url/format_id (same deterministic outtmpl -> same destination path).
+        download_progress[task_id].update({
+            "status": "paused", "url": url, "format_id": format_id, "filename": ctrl["filename"],
+        })
+    except _DownloadCancelledByUser:
+        _remove_partial_files(ctrl["filename"])
+        download_progress[task_id] = {"status": "cancelled"}
     except Exception as ex:
         download_progress[task_id] = {"status": "error", "error": str(ex)}
+    finally:
+        _download_control.pop(task_id, None)
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -2180,6 +2225,33 @@ def start_dl():
 @app.route("/api/download/progress/<tid>")
 def dl_progress(tid):
     return jsonify(download_progress.get(tid, {"status": "not_found"}))
+
+
+@app.route("/api/download/pause/<tid>", methods=["POST"])
+def pause_dl(tid):
+    ctrl = _download_control.get(tid)
+    if not ctrl:
+        return jsonify({"error": "Download não encontrado ou já finalizado."}), 404
+    ctrl["action"] = "pause"
+    ctrl["stop"].set()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/download/cancel/<tid>", methods=["POST"])
+def cancel_dl(tid):
+    # Still running: signal the hook to abort on its next call.
+    ctrl = _download_control.get(tid)
+    if ctrl:
+        ctrl["action"] = "cancel"
+        ctrl["stop"].set()
+        return jsonify({"ok": True})
+    # Already paused (no thread left to signal): clean up the partial file directly.
+    p = download_progress.get(tid)
+    if p and p.get("status") == "paused":
+        _remove_partial_files(p.get("filename"))
+        download_progress[tid] = {"status": "cancelled"}
+        return jsonify({"ok": True})
+    return jsonify({"error": "Download não encontrado ou já finalizado."}), 404
 
 
 @app.route("/api/download/file/<tid>")
