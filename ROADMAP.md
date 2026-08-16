@@ -49,6 +49,7 @@ Status do projeto e próximos passos. Mantido junto com o [README.md](README.md)
 - O backoff fixo de 2s ainda não bastava pra picos de contenção mais longos (~40s vistos em produção, com uma aba do Chrome pessoal consumindo ~32% de CPU continuamente por 3,6h) — trocado por backoff escalonado (3s/6s/9s) e o número de tentativas subiu de 3 para 4, dando até ~25-30s de janela total pra sobreviver a uma contenção mais longa antes de desistir
 - Self-heal: se as 4 tentativas de retry se esgotarem com um erro transiente (`_self_heal_restart`), o worker do gunicorn se reinicia sozinho (`SIGTERM` no próprio processo — o arbiter do gunicorn sobe um substituto na hora, mesmo mecanismo do `--max-requests`), pulando se houver um download em andamento (roda como thread em background no mesmo worker). Não corrige a causa raiz (contenção externa de CPU/memória), só garante um estado limpo mais rápido do que o watchdog (até 120s depois) conseguiria
 - **Vazamento crítico de disco**: `_ss_driver()` cria um diretório único (`tempfile.mkdtemp()`) em `/tmp` como `--user-data-dir` de cada sessão do Chrome, mas nenhum caminho de limpeza (`_ss_close`/`_xf_close`/`_hard_kill_driver`/watchdog) jamais apagava esse diretório do disco — Chrome não limpa sozinho um `--user-data-dir` fornecido externamente (só limpa perfis que ele mesmo cria). Achado ao investigar por que o `/tmp` do servidor chegou a 100% cheio (7.3 GB, ~27 diretórios de sessões antigas nunca removidos): com o disco cheio, qualquer sessão nova do Chrome falha ao gravar seu perfil e trava na hora — muito provavelmente a causa real (ou uma causa relevante) por trás de boa parte dos "tab crashed" que este roadmap vinha atribuindo só à contenção de CPU. Corrigido: `_hard_kill_driver` agora apaga o `--user-data-dir` da sessão depois de matar os processos; a varredura de órfãos do watchdog também extrai e apaga o `--user-data-dir` de cada chromedriver órfão encontrado; todo `driver.quit()` avulso nos pontos de limpeza-em-falha do `/api/search` foi trocado por `_hard_kill_driver()` pelo mesmo motivo. De quebra, removido `_selenium_search`/`search_x_videos` — um segundo caminho de busca do X, morto/não referenciado por nenhuma rota ativa, que também vazava seu próprio `--user-data-dir` de um jeito totalmente não seguido por `_hard_kill_driver`
+- Alerta/log estruturado quando um scraper para de bater (`_record_scraper_outcome`) — uma exceção já aparece na hora como erro pro usuário; o buraco era o caso *silencioso*: a requisição "funciona" (200 OK, sem exceção) mas o parser não extrai nada, porque o site mudou o HTML/JSON por baixo de um seletor/chave frágil. Rastreia uma sequência de buscas *home/categoria* seguidas sem nenhum resultado por plataforma (não buscas por palavra-chave — uma busca rara pode legitimamente dar zero, mas o feed/categoria de uma plataforma deveria sempre ter conteúdo); qualquer sucesso zera a sequência. A partir de 5 seguidas sem resultado, loga um `[PARSER-ALERT]` bem marcado no log (grep fácil); se continuar quebrado, realerta a cada 10 falhas seguidas em vez de floodar o log a cada chamada
 
 ---
 
@@ -61,9 +62,6 @@ Status do projeto e próximos passos. Mantido junto com o [README.md](README.md)
 ---
 
 ## 🔧 Próximos passos propostos
-
-### Robustez / manutenção
-- [ ] Alerta/log estruturado quando um scraper parar de bater (sinal de que o site mudou o HTML e o parser quebrou)
 
 ### Novas plataformas
 - [ ] Definir com o usuário quais sites entram em seguida (candidatos a levantar: outros agregadores com filtro de orientação, sites com API pública, etc.)

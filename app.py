@@ -600,6 +600,41 @@ _TRANSIENT_BROWSER_ERRORS = (
 _BROWSER_RETRY_ATTEMPTS = 4  # 1 initial try + 3 retries with a fresh Chrome session
 
 
+# ── Scraper health: alert when a scraper silently stops returning results ────
+# A raised exception (network error, HTML parse error, Selenium crash) already
+# surfaces immediately as an error message — that's not the gap. The dangerous
+# case is *silent*: the request "succeeds" (200 OK, no exception) but the
+# parser extracts nothing, because the target site changed its HTML/JSON shape
+# out from under a brittle selector/key path. A single zero-result search is
+# normal (a rare query, a momentarily empty page); several IN A ROW on an
+# endpoint that should reliably have content (a category/home feed, not an
+# arbitrary keyword search) is the actual signal something broke. Restricted
+# to home/category-browse calls specifically to avoid false positives from
+# genuinely narrow keyword searches returning zero legitimately.
+_SCRAPER_HEALTH = {}
+_SCRAPER_ZERO_ALERT_THRESHOLD = 5   # consecutive zero-result home/category calls before the first alert
+_SCRAPER_ZERO_ALERT_REPEAT    = 10  # re-alert every N further consecutive failures, so a long-broken
+                                     # scraper isn't spammed every call but also isn't forgotten
+
+
+def _record_scraper_outcome(platform, got_results, context=""):
+    h = _SCRAPER_HEALTH.setdefault(platform, {"zero_streak": 0, "last_alert_streak": 0})
+    if got_results:
+        h["zero_streak"] = 0
+        h["last_alert_streak"] = 0
+        return
+    h["zero_streak"] += 1
+    streak = h["zero_streak"]
+    first_alert  = streak == _SCRAPER_ZERO_ALERT_THRESHOLD
+    repeat_alert = streak > _SCRAPER_ZERO_ALERT_THRESHOLD and (streak - h["last_alert_streak"]) >= _SCRAPER_ZERO_ALERT_REPEAT
+    if first_alert or repeat_alert:
+        h["last_alert_streak"] = streak
+        print(f"[PARSER-ALERT] platform={platform} zero_result_streak={streak} context={context!r} — "
+              f"{_SCRAPER_ZERO_ALERT_THRESHOLD}+ buscas seguidas sem nenhum resultado num endpoint que "
+              f"deveria sempre ter conteúdo. Provável mudança no HTML/JSON do site (parser quebrado) "
+              f"ou o site fora do ar — vale checar manualmente.")
+
+
 def _is_transient_browser_error(exc):
     """True if `exc` looks like a dead/crashed Chrome or chromedriver — worth
     silently retrying with a fresh session instead of surfacing a raw Python
@@ -1899,6 +1934,7 @@ def search():
                 driver = None  # ownership transferred to _XF_SS; don't quit it below
 
                 results, has_more = _xf_fetch_page(page_size)
+                _record_scraper_outcome("xfree", bool(results), context=f"category={category} query={q!r}")
                 if not results and not has_more:
                     return jsonify({"error": "Nenhum vídeo encontrado no xfree.com.",
                                     "results": [], "has_more": False})
@@ -1908,6 +1944,10 @@ def search():
                 })
             except _NoResultsError as e:
                 _hard_kill_driver(driver)
+                # xFree has no login wall — every _NoResultsError here means the
+                # category page rendered but no .wall__item ever appeared, which
+                # a real category page should always have.
+                _record_scraper_outcome("xfree", False, context=f"category={category} query={q!r}")
                 return jsonify({"error": str(e), "results": [], "has_more": False})
             except Exception as e:
                 _hard_kill_driver(driver)
@@ -1939,6 +1979,11 @@ def search():
             "seen_ids": set(), "finished": False, "last_used": time.time(),
         })
         results, raw_count, err = search_site_page(platform, q, page=first_page, sort=sort, duration=duration, category=category)
+        if not q:
+            # Only home/category browsing, not keyword searches — a rare
+            # keyword can legitimately return zero, but a category landing
+            # page should always have content.
+            _record_scraper_outcome(platform, raw_count > 0, context=f"category={category}")
         if err and not results:
             return jsonify({"error": err, "results": [], "has_more": False})
         # has_more based on raw page size: if the site returned a full page, there are likely more
@@ -1998,12 +2043,21 @@ def search():
             driver = None  # ownership transferred to _SS; don't quit it below
 
             results, has_more = _ss_fetch_page(page_size)
+            if t in ("home", "following"):
+                # Only the feed types, not keyword/hashtag/user searches — a
+                # narrow keyword search can legitimately return zero results,
+                # but an active account's own feed should always have tweets.
+                _record_scraper_outcome("x", bool(results), context=f"type={t}")
             return jsonify({
                 "results": results, "count": len(results),
                 "has_more": has_more, "search_id": sid,
             })
         except _NoResultsError as e:
             _hard_kill_driver(driver)
+            # Exclude the "needs login" case — that's an auth problem, not a
+            # sign the tweet-parsing logic broke.
+            if t in ("home", "following") and "solicitou login" not in str(e):
+                _record_scraper_outcome("x", False, context=f"type={t}")
             return jsonify({"error": str(e), "results": [], "has_more": False})
         except Exception as e:
             # If the crash happened before `driver` was handed off to _SS (e.g.
