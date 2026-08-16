@@ -1058,6 +1058,13 @@ def _hard_kill_driver(drv):
                     proc.kill()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
+        # Chrome never deletes a --user-data-dir we passed in ourselves (that
+        # auto-cleanup only applies to profiles Chrome creates on its own) — so
+        # every session leaks this directory on disk unless we remove it here.
+        # Give the just-killed processes a moment to release their file handles
+        # before rmtree runs, so it doesn't lose a race with a lingering writer.
+        time.sleep(0.3)
+        shutil.rmtree(user_data_dir, ignore_errors=True)
 
 
 def _ss_close():
@@ -1206,7 +1213,7 @@ def _x_open_session(t, url, need_vc):
             except Exception:
                 pass
             needs_login = "login" in cur.lower() or "login" in title.lower()
-            driver.quit()
+            _hard_kill_driver(driver)
             raise _NoResultsError(
                 "X solicitou login — reimporte os cookies." if needs_login
                 else "Nenhum resultado encontrado para esta busca."
@@ -1238,10 +1245,7 @@ def _x_open_session(t, url, need_vc):
     except _NoResultsError:
         raise
     except Exception:
-        try:
-            driver.quit()
-        except Exception:
-            pass
+        _hard_kill_driver(driver)
         raise
 
 
@@ -1519,7 +1523,7 @@ def _xf_open_session(category, query):
                 EC.presence_of_element_located((By.CSS_SELECTOR, ".wall__item"))
             )
         except TimeoutException:
-            driver.quit()
+            _hard_kill_driver(driver)
             raise _NoResultsError("Nenhum vídeo encontrado no xfree.com.")
         time.sleep(1)
 
@@ -1540,10 +1544,7 @@ def _xf_open_session(category, query):
     except _NoResultsError:
         raise
     except Exception:
-        try:
-            driver.quit()
-        except Exception:
-            pass
+        _hard_kill_driver(driver)
         raise
 
 
@@ -1610,204 +1611,6 @@ def _xf_fetch_page(page_size=20):
     has_more = not _XF_SS["finished"]
     print(f"  xfree page: {len(results)} new, {len(seen_ids)} total seen, scrolls={_XF_SS['scroll_count']}, has_more={has_more}")
     return results, has_more
-
-
-# kept only as an internal helper; real entry points are the Flask routes below
-def _selenium_search(url, count=20, need_video_check=False):
-    """Legacy single-shot wrapper — used by the new /api/search route."""
-    import time, tempfile
-    try:
-        from selenium import webdriver
-        from selenium.webdriver.chrome.service import Service
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-        from webdriver_manager.chrome import ChromeDriverManager
-    except ImportError:
-        return [], "Selenium não instalado."
-
-    opts = Options()
-    opts.add_argument("--headless=new")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--disable-gpu")
-    opts.add_argument("--window-size=1280,900")
-    opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_argument(f"--user-data-dir={tempfile.mkdtemp()}")
-    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-    opts.add_experimental_option("useAutomationExtension", False)
-    opts.add_argument(
-        "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
-    )
-
-    driver = None
-    results = []
-    try:
-        driver = webdriver.Chrome(
-            service=Service(ChromeDriverManager().install()),
-            options=opts
-        )
-        # Mask webdriver flag
-        driver.execute_script(
-            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
-        )
-
-        # Visit x.com first so the domain matches when adding cookies
-        driver.get("https://x.com/")
-        time.sleep(1)
-
-        # Inject cookies from our Netscape file
-        if os.path.exists(COOKIES_FILE):
-            with open(COOKIES_FILE) as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    parts = line.split("\t")
-                    if len(parts) < 7:
-                        continue
-                    _, _, path, secure, _, name, value = parts[:7]
-                    try:
-                        driver.add_cookie({
-                            "name": name, "value": value,
-                            "path": path, "secure": secure == "TRUE",
-                        })
-                    except Exception:
-                        pass
-
-        # Navigate to the target page
-        driver.get(url)
-
-        # Wait for tweet articles
-        wait = WebDriverWait(driver, 25)
-        try:
-            wait.until(EC.presence_of_element_located(
-                (By.CSS_SELECTOR, 'article[data-testid="tweet"]')
-            ))
-        except Exception:
-            cur = driver.current_url
-            title = driver.title
-            if "login" in cur.lower() or "login" in title.lower():
-                return [], "X solicitou login. Reimporte os cookies."
-            return [], f"Nenhum tweet encontrado (página: {title!r}). Verifique login ou tente outra busca."
-
-        time.sleep(2)  # let initial batch render
-
-        # ── Scroll loop: keep scrolling until we collect `count` results ──────
-        seen_ids = set()
-        no_new_streak = 0
-        max_scrolls = 12
-
-        def _parse_articles():
-            """Read all currently rendered articles and add unseen ones."""
-            for art in driver.find_elements(By.CSS_SELECTOR, 'article[data-testid="tweet"]'):
-                if len(results) >= count:
-                    break
-                try:
-                    tweet_id, username, tweet_url = _canonical_tweet_url(art, By)
-
-                    # Dedup by numeric tweet ID
-                    if not tweet_id or tweet_id in seen_ids:
-                        continue
-                    seen_ids.add(tweet_id)
-
-                    # Optional: verify a video element is present
-                    if need_video_check:
-                        vid_els = art.find_elements(
-                            By.CSS_SELECTOR,
-                            '[data-testid="videoPlayer"],[data-testid="videoComponent"],'
-                            '[data-testid="animatedMediaPlayer"],video'
-                        )
-                        if not vid_els:
-                            continue
-
-                    text = ""
-                    try:
-                        text = art.find_element(
-                            By.CSS_SELECTOR, '[data-testid="tweetText"]'
-                        ).text[:120]
-                    except Exception:
-                        pass
-
-                    thumbnail = _extract_video_thumbnail(art, By)
-
-                    results.append({
-                        "id": tweet_id,
-                        "url": tweet_url,
-                        "title": text or f"Vídeo de @{username}",
-                        "uploader": username,
-                        "uploader_id": username,
-                        "duration": 0,
-                        "thumbnail": thumbnail,
-                        "view_count": 0,
-                        "like_count": 0,
-                    })
-                except Exception as e:
-                    print(f"  article parse error: {e}")
-
-        _parse_articles()
-
-        for _ in range(max_scrolls):
-            if len(results) >= count:
-                break
-            prev_seen = len(seen_ids)
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
-            time.sleep(2.5)
-            _parse_articles()
-            if len(seen_ids) == prev_seen:
-                no_new_streak += 1
-                if no_new_streak >= 3:
-                    print("  No new articles for 3 scrolls, stopping.")
-                    break
-            else:
-                no_new_streak = 0
-
-        print(f"  Collected {len(results)} results from {len(seen_ids)} articles seen")
-
-    except Exception as e:
-        print(f"Selenium error: {e}")
-        return [], f"Erro no navegador headless: {e}"
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except Exception:
-                pass
-
-    if not results:
-        return [], "Nenhum vídeo encontrado na página."
-    return results, None
-
-
-def search_x_videos(query, search_type, min_mb=0, max_mb=999999, count=20):
-    import urllib.parse
-
-    if search_type == "keyword":
-        q = urllib.parse.quote(f"{query} filter:videos")
-        url = f"https://x.com/search?q={q}&src=typed_query&f=video"
-        results, error = _selenium_search(url, count=count, need_video_check=False)
-    elif search_type == "hashtag":
-        tag = query.lstrip("#")
-        url = f"https://x.com/hashtag/{tag}?src=hashtag_click&f=video"
-        results, error = _selenium_search(url, count=count, need_video_check=False)
-    elif search_type == "user":
-        username = query.lstrip("@")
-        url = f"https://x.com/{username}/media"
-        results, error = _selenium_search(url, count=count, need_video_check=True)
-    elif search_type == "home":
-        url = "https://x.com/home"
-        results, error = _selenium_search(url, count=count, need_video_check=True)
-    else:
-        q = urllib.parse.quote(f"{query} filter:videos")
-        url = f"https://x.com/search?q={q}&src=typed_query&f=video"
-        results, error = _selenium_search(url, count=count, need_video_check=False)
-
-    if error:
-        print(f"Selenium search error ({search_type}): {error}")
-
-    return results
 
 
 def get_video_formats(url):
@@ -2059,18 +1862,10 @@ def search():
                     "has_more": has_more, "search_id": sid,
                 })
             except _NoResultsError as e:
-                if driver is not None:
-                    try:
-                        driver.quit()
-                    except Exception:
-                        pass
+                _hard_kill_driver(driver)
                 return jsonify({"error": str(e), "results": [], "has_more": False})
             except Exception as e:
-                if driver is not None:
-                    try:
-                        driver.quit()
-                    except Exception:
-                        pass
+                _hard_kill_driver(driver)
                 _xf_close()
                 last_err = e
                 if attempt + 1 < _BROWSER_RETRY_ATTEMPTS and _is_transient_browser_error(e):
@@ -2163,21 +1958,14 @@ def search():
                 "has_more": has_more, "search_id": sid,
             })
         except _NoResultsError as e:
-            if driver is not None:
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
+            _hard_kill_driver(driver)
             return jsonify({"error": str(e), "results": [], "has_more": False})
         except Exception as e:
             # If the crash happened before `driver` was handed off to _SS (e.g.
-            # during initial navigation), _ss_close() below won't see it — quit
-            # it here so the Chrome/chromedriver process doesn't leak.
-            if driver is not None:
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
+            # during initial navigation), _ss_close() below won't see it — clean
+            # it up here so the Chrome/chromedriver process and its --user-data-dir
+            # don't leak.
+            _hard_kill_driver(driver)
             _ss_close()
             last_err = e
             if attempt + 1 < _BROWSER_RETRY_ATTEMPTS and _is_transient_browser_error(e):
@@ -2690,12 +2478,20 @@ def _watchdog_sweep():
                 if age <= _WATCHDOG_ORPHAN_AGE:
                     continue
                 print(f"  Watchdog: matando chromedriver órfão pid={proc.info['pid']} (idade {int(age)}s).")
+                user_data_dirs = set()
                 for child in proc.children(recursive=True):
                     try:
+                        for arg in child.cmdline():
+                            if arg.startswith("--user-data-dir="):
+                                user_data_dirs.add(arg.split("=", 1)[1])
                         child.kill()
                     except psutil.NoSuchProcess:
                         pass
                 proc.kill()
+                if user_data_dirs:
+                    time.sleep(0.3)  # let just-killed processes release their file handles
+                    for d in user_data_dirs:
+                        shutil.rmtree(d, ignore_errors=True)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
     except Exception as e:
