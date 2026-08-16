@@ -334,7 +334,7 @@
       </svg>
     );
 
-    function VideoCard({ video, onSelect, selected, isChecked, onToggleCheck, showCheckbox=true }) {
+    function VideoCard({ video, onSelect, selected, isChecked, onToggleCheck, showCheckbox=true, checkKey }) {
       const [pv, setPv]       = useState(null); // null | "loading" | {url, thumbnail?} | {error}
       const [hov, setHov]     = useState(false);
       const [thumbErr, setThumbErr] = useState(false);
@@ -384,7 +384,7 @@
             {/* ── Multi-select checkbox ── */}
             {showCheckbox&&(
               <div
-                onClick={e=>{e.stopPropagation();onToggleCheck&&onToggleCheck(video.id);}}
+                onClick={e=>{e.stopPropagation();onToggleCheck&&onToggleCheck(checkKey??video.id);}}
                 style={{position:"absolute",top:8,left:8,zIndex:10,width:22,height:22,
                   borderRadius:5,cursor:"pointer",transition:"all .15s",
                   border:"2px solid "+(isChecked?"#1d9bf0":"rgba(255,255,255,.7)"),
@@ -1659,6 +1659,17 @@
       const [searchingAll,  setSearchingAll]  = useState(false);
       const [allProgress,   setAllProgress]   = useState(null); // {done,total,current} | null
       const [allErr,        setAllErr]        = useState("");
+      // Per-platform pagination — each platform keeps its own search_id/has_more/
+      // loading state, since the backend now gives each site its own session slot
+      // (see the _SITE_SS split in app.py) instead of one shared one, so "carregar
+      // mais" for one platform never gets evicted by another platform's search.
+      const [allSearchIds,  setAllSearchIds]  = useState({}); // platform -> search_id
+      const [allHasMore,    setAllHasMore]    = useState({}); // platform -> bool
+      const [allLoadingMore,setAllLoadingMore]= useState({}); // platform -> bool
+      // Bulk multi-select for aggregate results — a separate Set from the single-
+      // platform `checked`, keyed by `${platform}-${id}` rather than bare id, since
+      // ids aren't guaranteed unique across five different platforms.
+      const [checkedAll,    setCheckedAll]    = useState(new Set());
 
       function bodyForAllSearch(p, q){
         if (p==="x")        return {query:q, type:"keyword", platform:p, duration:"any", count};
@@ -1671,6 +1682,7 @@
         const q = (qOverride ?? query).trim();
         if(!q||searchingAll) return;
         setSearchingAll(true); setAllResults([]); setAllErr("");
+        setAllSearchIds({}); setAllHasMore({}); setAllLoadingMore({}); setCheckedAll(new Set());
         let any = false;
         for(let i=0;i<ALL_PLATFORMS.length;i++){
           const p = ALL_PLATFORMS[i];
@@ -1682,6 +1694,8 @@
               any = true;
               const tagged = d.results.map(v=>({...v, _platform:p}));
               setAllResults(prev=>[...prev, ...tagged]);
+              setAllSearchIds(prev=>({...prev, [p]:d.search_id||null}));
+              setAllHasMore(prev=>({...prev, [p]:!!d.has_more}));
             }
           }catch{ /* skip this platform, keep going with the rest */ }
         }
@@ -1689,6 +1703,37 @@
         setSearchingAll(false);
         if(!any) setAllErr("Nenhum vídeo encontrado em nenhuma plataforma.");
         else addToHistory({platform:"all", type:"search", query:q, category:undefined});
+      }
+
+      async function loadMoreAllPlatform(p){
+        const sid = allSearchIds[p];
+        if(!sid||allLoadingMore[p]) return;
+        setAllLoadingMore(prev=>({...prev, [p]:true}));
+        try{
+          const r = await fetch(API+"/search/more",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({search_id:sid,count})});
+          const d = await r.json();
+          if(d.error){
+            setAllHasMore(prev=>({...prev, [p]:false}));
+          }else{
+            const tagged = (d.results||[]).map(v=>({...v, _platform:p}));
+            setAllResults(prev=>[...prev, ...tagged]);
+            setAllHasMore(prev=>({...prev, [p]:!!d.has_more}));
+          }
+        }catch{ setAllHasMore(prev=>({...prev, [p]:false})); }
+        setAllLoadingMore(prev=>({...prev, [p]:false}));
+      }
+
+      function toggleCheckAll(key) {
+        setCheckedAll(prev=>{const n=new Set(prev);n.has(key)?n.delete(key):n.add(key);return n;});
+      }
+      function clearCheckedAll() { setCheckedAll(new Set()); }
+      function selectAllAll()    { setCheckedAll(new Set(allResults.map(v=>v._platform+"-"+v.id))); }
+
+      function startBulkDownloadAll() {
+        const vids = allResults.filter(v=>checkedAll.has(v._platform+"-"+v.id));
+        if (!vids.length) return;
+        setBulkTasks(vids.map(v=>({url:v.url,title:v.title,uploader:v.uploader,fmt:bulkFmt})));
+        clearCheckedAll();
       }
 
       if(session===null) return <div style={{minHeight:"100vh",background:"var(--bg)",display:"flex",alignItems:"center",justifyContent:"center"}}><Spin size={36}/></div>;
@@ -1751,7 +1796,7 @@
             </div>
           </div>
 
-          <div className="page-container" style={{maxWidth:960,margin:"0 auto",padding:"26px 20px "+(checked.size>0?"140px":"64px"),transition:"padding .2s"}}>
+          <div className="page-container" style={{maxWidth:960,margin:"0 auto",padding:"26px 20px "+((checked.size>0||checkedAll.size>0)?"140px":"64px"),transition:"padding .2s"}}>
           {view==="library" ? (
             <LibraryGrid items={library} loading={libLoading} err={libErr} onOpen={setPlayerIdx}/>
           ) : (<>
@@ -1802,9 +1847,9 @@
                   const active = p.id==="all" ? searchAllMode : (!searchAllMode && platform===p.id);
                   return (
                     <button key={p.id} onClick={()=>{
-                        if(p.id==="all"){ setSearchAllMode(true); setAllErr(""); return; }
+                        if(p.id==="all"){ setSearchAllMode(true); setAllErr(""); clearChecked(); return; }
                         setSearchAllMode(false);
-                        setPlatform(p.id);setResults([]);setErr("");setSearchId(null);setSiteSort("relevance");setSiteDuration("any");setXfCategory("straight");setPhCategory("straight");setSiteCategory("straight");setType("home");
+                        setPlatform(p.id);setResults([]);setErr("");setSearchId(null);setSiteSort("relevance");setSiteDuration("any");setXfCategory("straight");setPhCategory("straight");setSiteCategory("straight");setType("home");clearCheckedAll();
                       }}
                       style={{flex:1,minWidth:70,padding:"7px 4px",borderRadius:8,border:"none",
                         background:active?"rgba(29,155,240,.15)":"transparent",
@@ -2098,14 +2143,35 @@
               <div style={{animation:"fadeIn .4s ease"}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:8}}>
                   <span style={{fontSize:14,color:"var(--text)",fontWeight:600}}>{allResults.length} vídeo{allResults.length!==1?"s":""} encontrado{allResults.length!==1?"s":""} em {new Set(allResults.map(v=>v._platform)).size} plataforma{new Set(allResults.map(v=>v._platform)).size!==1?"s":""}</span>
-                  <span style={{fontSize:12,color:"var(--text-2)"}}>▶ assistir · <DlI/> baixar</span>
+                  <div style={{display:"flex",alignItems:"center",gap:12}}>
+                    <span style={{fontSize:12,color:"var(--text-2)"}}>▶ assistir · <DlI/> baixar</span>
+                    <button
+                      onClick={checkedAll.size===allResults.length?clearCheckedAll:selectAllAll}
+                      style={{background:"none",border:"1px solid var(--border-2)",borderRadius:8,
+                        color:"var(--text-2)",fontSize:12,padding:"4px 10px",cursor:"pointer"}}>
+                      {checkedAll.size===allResults.length?"Desmarcar todos":"Selecionar todos"}
+                    </button>
+                  </div>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:13}}>
                   {allResults.map((v,i)=><VideoCard key={v._platform+"-"+v.id+"-"+i} video={v}
                     onSelect={vid=>{setSelVideo(vid);setShowModal(true);}}
                     selected={selVideo?.id===v.id&&showModal}
-                    showCheckbox={false}/>)}
+                    checkKey={v._platform+"-"+v.id}
+                    isChecked={checkedAll.has(v._platform+"-"+v.id)}
+                    onToggleCheck={toggleCheckAll}/>)}
                 </div>
+
+                {ALL_PLATFORMS.some(p=>allHasMore[p])&&(
+                  <div style={{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:10,marginTop:24}}>
+                    {ALL_PLATFORMS.filter(p=>allHasMore[p]).map(p=>(
+                      <button key={p} onClick={()=>loadMoreAllPlatform(p)} disabled={allLoadingMore[p]}
+                        style={{padding:"9px 20px",borderRadius:9999,border:"1px solid #1d9bf0",background:allLoadingMore[p]?"var(--bg-input)":"transparent",color:"#1d9bf0",fontSize:13,fontWeight:700,cursor:allLoadingMore[p]?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:8,transition:"all .2s",opacity:allLoadingMore[p]?.6:1}}>
+                        {allLoadingMore[p]?<><Spin size={14} color="#1d9bf0"/>Carregando…</>:"⬇ Mais de "+PLATFORM_LABEL[p]}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -2133,13 +2199,21 @@
             }}/>
           )}
 
-          {checked.size>0&&(
+          {!searchAllMode&&checked.size>0&&(
             <BulkActionBar
               count={checked.size} total={results.length}
               fmt={bulkFmt} onFmtChange={setBulkFmt}
               onDownload={startBulkDownload}
               onSelectAll={selectAll}
               onClear={clearChecked}/>
+          )}
+          {searchAllMode&&checkedAll.size>0&&(
+            <BulkActionBar
+              count={checkedAll.size} total={allResults.length}
+              fmt={bulkFmt} onFmtChange={setBulkFmt}
+              onDownload={startBulkDownloadAll}
+              onSelectAll={selectAllAll}
+              onClear={clearCheckedAll}/>
           )}
           {bulkTasks&&(
             <BulkProgressModal tasks={bulkTasks} onClose={running=>{

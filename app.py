@@ -590,13 +590,22 @@ _SS_MAX_SCROLL = 60  # absolute scroll limit per session
 
 # ── yt-dlp site session (XHamster / XVideos / Pornhub) ───────────────────────
 # page: next page to fetch. XHamster/Pornhub 1-based, XVideos 0-based (both stored as-is).
-_SITE_SS = {
-    "id": None, "site": None, "query": None,
-    "page": 1, "sort": "relevance", "duration": "any", "category": "straight",
-    "seen_ids": set(),   # dedup across pages — some sites (e.g. Pornhub category
-                         # browsing) repeat a handful of promoted items per page
-    "finished": False, "last_used": 0,
-}
+# One independent slot per site (not a single shared dict) — "buscar em tudo"
+# searches all three sequentially in the same request cycle, and a shared slot
+# would have each site's search silently evict the previous one's session,
+# making "carregar mais" permanently broken for whichever two sites didn't run
+# last. Each slot is looked up by search_id, so cross-site lookups stay O(3).
+def _new_site_ss():
+    return {
+        "id": None, "site": None, "query": None,
+        "page": 1, "sort": "relevance", "duration": "any", "category": "straight",
+        "seen_ids": set(),   # dedup across pages — some sites (e.g. Pornhub category
+                             # browsing) repeat a handful of promoted items per page
+        "finished": False, "last_used": 0,
+    }
+
+
+_SITE_SS = {site: _new_site_ss() for site in ("xhamster", "xvideos", "pornhub")}
 _SITE_SS_TIMEOUT = 600
 
 # ── xFree session (Selenium — both home and search load/paginate via client-side
@@ -2009,7 +2018,8 @@ def search():
         # XHamster/Pornhub start at page 1; XVideos starts at page 0
         first_page = 0 if platform == "xvideos" else 1
         sid = str(uuid.uuid4())[:12]
-        _SITE_SS.update({
+        ss = _SITE_SS[platform]
+        ss.update({
             "id": sid, "site": platform, "query": q,
             "page": first_page + 1,   # next page to fetch
             "sort": sort, "duration": duration, "category": category,
@@ -2026,17 +2036,17 @@ def search():
         # has_more based on raw page size: if the site returned a full page, there are likely more
         has_more = raw_count >= 10
         if raw_count == 0:
-            _SITE_SS["finished"] = True
+            ss["finished"] = True
             has_more = False
         # XVideos' category landing page returns the exact same set regardless of
         # page — there's no more to fetch, so don't offer a "load more" that would
         # just loop forever getting 0 new (deduped) results.
         if platform == "xvideos" and not q:
             has_more = False
-            _SITE_SS["finished"] = True
+            ss["finished"] = True
         # Dedup — some sites (e.g. Pornhub category browsing) repeat a handful of
         # promoted items across consecutive pages.
-        results = [r for r in results if r["id"] not in _SITE_SS["seen_ids"] and not _SITE_SS["seen_ids"].add(r["id"])]
+        results = [r for r in results if r["id"] not in ss["seen_ids"] and not ss["seen_ids"].add(r["id"])]
         return jsonify({
             "results": results, "count": len(results),
             "has_more": has_more, "search_id": sid,
@@ -2170,31 +2180,35 @@ def search_more():
                 return jsonify({"error": f"Erro ao carregar mais: {e2}",
                                 "results": [], "has_more": False}), 500
 
-    # ── Site session (XHamster / XVideos) ────────────────────────────────────
-    if _SITE_SS["id"] == sid:
-        if time.time() - _SITE_SS.get("last_used", 0) > _SITE_SS_TIMEOUT:
-            _SITE_SS.update({"id": None, "finished": True})
+    # ── Site session (XHamster / XVideos / Pornhub) ──────────────────────────
+    # Each site has its own slot now (see _SITE_SS definition) — look up which
+    # one (if any) this search_id belongs to rather than assuming a single slot.
+    site_match = next((site for site, ss in _SITE_SS.items() if ss["id"] == sid), None)
+    if site_match:
+        ss = _SITE_SS[site_match]
+        if time.time() - ss.get("last_used", 0) > _SITE_SS_TIMEOUT:
+            ss.update({"id": None, "finished": True})
             return jsonify({"error": "Sessão expirada — faça uma nova busca.",
                             "results": [], "has_more": False}), 400
-        if _SITE_SS["finished"]:
+        if ss["finished"]:
             return jsonify({"results": [], "has_more": False, "search_id": sid})
-        cur_page = _SITE_SS["page"]
+        cur_page = ss["page"]
         results, raw_count, err = search_site_page(
-            _SITE_SS["site"], _SITE_SS["query"],
+            ss["site"], ss["query"],
             page=cur_page,
-            sort=_SITE_SS.get("sort", "relevance"),
-            duration=_SITE_SS.get("duration", "any"),
-            category=_SITE_SS.get("category", "straight"),
+            sort=ss.get("sort", "relevance"),
+            duration=ss.get("duration", "any"),
+            category=ss.get("category", "straight"),
         )
-        _SITE_SS["page"]      = cur_page + 1
-        _SITE_SS["last_used"] = time.time()
+        ss["page"]      = cur_page + 1
+        ss["last_used"] = time.time()
         has_more = raw_count >= 10   # if site returned content, assume more pages exist
         if raw_count == 0:
-            _SITE_SS["finished"] = True
+            ss["finished"] = True
             has_more = False
         # Dedup — some sites (e.g. Pornhub category browsing) repeat a handful of
         # promoted items across consecutive pages.
-        results = [r for r in results if r["id"] not in _SITE_SS["seen_ids"] and not _SITE_SS["seen_ids"].add(r["id"])]
+        results = [r for r in results if r["id"] not in ss["seen_ids"] and not ss["seen_ids"].add(r["id"])]
         return jsonify({
             "results": results, "count": len(results),
             "has_more": has_more, "search_id": sid,
