@@ -286,6 +286,11 @@ Validado em três níveis: um teste Python usando o test client do Flask confirm
 | POST | `/api/search/start` | Iniciar busca de plataforma única como task em background |
 | POST | `/api/search/start_all` | Iniciar busca "buscar em tudo" (5 plataformas) como task em background |
 | GET | `/api/search/task/<tid>` | Consultar status/resultados de uma task de busca em background |
+| GET | `/api/history` | Listar histórico de busca/favoritos (persistido no servidor, SQLite) |
+| POST | `/api/history` | Registrar uma busca no histórico (dedup por platform+type+query+category) |
+| POST | `/api/history/<id>/favorite` | Alternar a marcação de favorito de uma entrada |
+| DELETE | `/api/history/<id>` | Remover uma entrada do histórico |
+| POST | `/api/history/clear` | Limpar entradas não-favoritas do histórico |
 | POST | `/api/preview` | URL direta para preview no navegador |
 | POST | `/api/formats` | Listar formatos disponíveis (yt-dlp) |
 | POST | `/api/download/start` | Iniciar download assíncrono |
@@ -319,11 +324,11 @@ Toda a interface está em `index.html` como JSX inline compilado pelo Babel no n
 
 ### Histórico e favoritos de busca
 
-Toda busca bem-sucedida (qualquer plataforma, incluindo carregamentos da Home) é registrada em `searchHistory`, persistida em `localStorage` sob `scrapperx_search_history` — o mesmo padrão já usado pro rastreio de downloads em background (`scrapperx_bg_tasks`). Uma entrada do histórico é identificada por `platform+type+query+category`; repetir a mesma busca move ela pro topo em vez de duplicar, e preserva uma marcação de favorito existente em vez de substituí-la por uma entrada nova sem estrela. Entradas não-favoritas são limitadas a `HISTORY_MAX` (30, as mais antigas caem primeiro); favoritas ficam isentas do limite e de "Limpar histórico" (que só apaga entradas não-favoritas).
+Toda busca bem-sucedida (qualquer plataforma, incluindo carregamentos da Home) é registrada em `searchHistory`, persistida **no servidor** em `search_history.db` (SQLite, do lado do `app.py` — mesmo padrão/motivo do `download_history.db`: fora de `tempfile.gettempdir()`, pra sobreviver a reboots e limpezas de `/tmp` do SO) via os endpoints `/api/history*`. Antes isso vivia só no `localStorage` do navegador (`scrapperx_search_history`); mover pro servidor faz com que o histórico/favoritos do usuário admin fiquem compartilhados entre navegadores/dispositivos e sobrevivam a uma limpeza de dados do navegador, em vez de ficarem presos a um único perfil de navegador. Uma entrada do histórico é identificada por `platform+type+query+category`; repetir a mesma busca move ela pro topo (atualização do `ts` no servidor) em vez de duplicar, e preserva uma marcação de favorito existente em vez de substituí-la por uma entrada nova sem estrela. Entradas não-favoritas são limitadas a `HISTORY_MAX` (30, as mais antigas caem primeiro, aplicado no servidor em `_prune_search_history`); favoritas ficam isentas do limite e de "Limpar histórico" (que só apaga entradas não-favoritas). O frontend não calcula mais a lógica de dedup/limite sozinho — toda chamada a `/api/history*` devolve a lista completa e atualizada, e o cliente só renderiza o que ela manda.
 
 Clicar numa entrada do histórico (`runHistoryEntry`) precisa tanto atualizar os seletores visíveis de plataforma/tipo/query/categoria quanto disparar a busca na hora — mas setters de estado do React são assíncronos, então `search()` lendo `platform`/`query`/etc. do seu próprio closure ainda veria os valores *anteriores* nessa mesma chamada. Por isso `search()` aceita um objeto `overrides` opcional que tem prioridade sobre o estado atual só nessa invocação, enquanto todo chamador existente (o botão de busca, o `Enter` no campo de query, o efeito de auto-busca na troca de aba) continua chamando `search()` sem argumentos e se comporta exatamente como antes. Uma consequência que vale saber se for mexer nesse código: `search` é chamado diretamente como `onClick={()=>search()}`, nunca cru como `onClick={search}` — o React passaria o `SyntheticEvent` do clique como `overrides` nesse caso, e como eventos carregam uma propriedade `.type` de verdade (`"click"`), `eType` silenciosamente viraria a string `"click"` em vez de cair pro estado.
 
-Validado com um teste de render headless (jsdom + React 18, transformando via Babel o próprio bloco de script do `index.html`) simulando cliques e eventos de input reais de ponta a ponta: abrir o painel de histórico vazio, rodar uma busca e confirmar que ela foi registrada com o rótulo certo, favoritar uma entrada, confirmar que "Limpar histórico" a preserva, e confirmar que clicar numa entrada do histórico dispara um `/api/search` novo com o corpo esperado.
+Validado com um teste Python usando o test client do Flask: adicionar uma entrada, readicionar a mesma combinação de platform+type+query+category (dedup — a contagem continua 1, o `ts` avança), favoritar, "Limpar histórico" preservando a favorita, e apagar uma entrada.
 
 ### "Buscar em tudo" — buscando em todas as plataformas de uma vez
 

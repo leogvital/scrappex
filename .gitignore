@@ -13,6 +13,9 @@ x_cookies.txt
 # Histórico de downloads (dado de runtime, não código-fonte)
 download_history.db
 
+# Histórico de buscas / favoritos (dado de runtime, não código-fonte)
+search_history.db
+
 # Ferramentas locais
 .claude/settings.local.json
 

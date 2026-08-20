@@ -1438,20 +1438,14 @@
         });
       }
 
-      // Search history / favorites — persisted to localStorage, same pattern as
-      // the background download tracking below. Non-favorite entries are capped
-      // at HISTORY_MAX (oldest dropped first); favorites are never pruned.
-      const HISTORY_STORAGE_KEY = "scrapperx_search_history";
-      const HISTORY_MAX = 30;
-      const [searchHistory, setSearchHistory] = useState(()=>{
-        try { return JSON.parse(localStorage.getItem(HISTORY_STORAGE_KEY) || "[]"); }
-        catch { return []; }
-      });
+      // Search history / favorites — persisted server-side (SQLite, see
+      // /api/history in app.py) so they're shared across browsers/devices and
+      // survive a browser data wipe, instead of living only in this browser's
+      // localStorage. Every mutation POSTs/DELETEs to the server and replaces
+      // local state with the full list it returns — the server owns dedup and
+      // the HISTORY_MAX cap now, the client just renders whatever it says.
+      const [searchHistory, setSearchHistory] = useState([]);
       const [showHistory, setShowHistory] = useState(false);
-
-      function saveHistoryToStorage(items) {
-        try { localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(items)); } catch {}
-      }
 
       const categoryNames = {straight:"Hétero",gay:"Gay",trans:"Trans",all:"Tudo",sapphic:"Sáfica"};
       const xTypeNames    = {home:"Para Você",following:"Seguindo",keyword:"Palavra-chave",hashtag:"Hashtag",user:"Usuário"};
@@ -1467,52 +1461,32 @@
         return cat ? `${p} · ${cat} · ${base}` : `${p} · ${base}`;
       }
 
-      // Identity for dedup: same platform+type+query+category counts as "the
-      // same search" re-run, so it moves to the top instead of duplicating.
-      const historyKey = h => [h.platform, h.type, h.query||"", h.category||""].join("|");
-
-      function addToHistory(entry) {
-        setSearchHistory(prev=>{
-          const key = historyKey(entry);
-          const dup = prev.find(h=>historyKey(h)===key);
-          const withoutDup = prev.filter(h=>historyKey(h)!==key);
-          const newEntry = {
-            ...entry,
-            id: dup?.id || (Date.now()+"-"+Math.random().toString(36).slice(2,7)),
-            ts: Date.now(),
-            favorite: dup?.favorite || false, // preserve a favorite star across re-runs
-          };
-          const merged = [newEntry, ...withoutDup];
-          const favs = merged.filter(h=>h.favorite);
-          const rest = merged.filter(h=>!h.favorite).slice(0, HISTORY_MAX);
-          const next = [...favs, ...rest].sort((a,b)=>b.ts-a.ts);
-          saveHistoryToStorage(next);
-          return next;
-        });
+      async function addToHistory(entry) {
+        try {
+          const r = await fetch(API+"/history", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(entry)});
+          setSearchHistory(await r.json());
+        } catch {}
       }
 
-      function toggleFavorite(id) {
-        setSearchHistory(prev=>{
-          const next = prev.map(h=>h.id===id?{...h,favorite:!h.favorite}:h);
-          saveHistoryToStorage(next);
-          return next;
-        });
+      async function toggleFavorite(id) {
+        try {
+          const r = await fetch(API+"/history/"+id+"/favorite", {method:"POST"});
+          setSearchHistory(await r.json());
+        } catch {}
       }
 
-      function removeHistoryEntry(id) {
-        setSearchHistory(prev=>{
-          const next = prev.filter(h=>h.id!==id);
-          saveHistoryToStorage(next);
-          return next;
-        });
+      async function removeHistoryEntry(id) {
+        try {
+          const r = await fetch(API+"/history/"+id, {method:"DELETE"});
+          setSearchHistory(await r.json());
+        } catch {}
       }
 
-      function clearHistory() {
-        setSearchHistory(prev=>{
-          const next = prev.filter(h=>h.favorite); // keep starred entries
-          saveHistoryToStorage(next);
-          return next;
-        });
+      async function clearHistory() {
+        try {
+          const r = await fetch(API+"/history/clear", {method:"POST"});
+          setSearchHistory(await r.json());
+        } catch {}
       }
 
       function runHistoryEntry(h) {
@@ -1637,6 +1611,12 @@
 
       useEffect(()=>{
         fetch(API+"/session").then(r=>r.json()).then(setSession).catch(()=>setSession({logged_in:false}));
+      },[]);
+
+      // Search history/favorites now live server-side — load them on mount
+      // instead of reading localStorage synchronously in useState above.
+      useEffect(()=>{
+        fetch(API+"/history").then(r=>r.json()).then(setSearchHistory).catch(()=>{});
       },[]);
 
       // Resume tracking any downloads still running when the browser was closed

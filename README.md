@@ -286,6 +286,11 @@ Validated at three levels: a Python test using Flask's test client confirming a 
 | POST | `/api/search/start` | Start a single-platform search as a background task |
 | POST | `/api/search/start_all` | Start a "buscar em tudo" (all 5 platforms) search as a background task |
 | GET | `/api/search/task/<tid>` | Poll a background search task's status/results |
+| GET | `/api/history` | List search history/favorites (server-side, SQLite) |
+| POST | `/api/history` | Record a search into history (dedups by platform+type+query+category) |
+| POST | `/api/history/<id>/favorite` | Toggle an entry's favorite flag |
+| DELETE | `/api/history/<id>` | Remove one history entry |
+| POST | `/api/history/clear` | Clear non-favorite history entries |
 | POST | `/api/preview` | Direct URL for in-browser preview |
 | POST | `/api/formats` | List available formats (yt-dlp) |
 | POST | `/api/download/start` | Start an async download |
@@ -319,11 +324,11 @@ The entire interface lives in `index.html` as inline JSX compiled by Babel in th
 
 ### Search history and favorites
 
-Every successful search (any platform, including Home-feed loads) is recorded into `searchHistory`, persisted to `localStorage` under `scrapperx_search_history` — the same pattern already used for background download tracking (`scrapperx_bg_tasks`). A history entry is identified by `platform+type+query+category`; re-running the same search moves it to the top instead of duplicating, and preserves an existing favorite flag rather than replacing it with a fresh unstarred entry. Non-favorite entries are capped at `HISTORY_MAX` (30, oldest dropped first); favorites are exempt from the cap and from "Limpar histórico" (which only clears non-favorite entries).
+Every successful search (any platform, including Home-feed loads) is recorded into `searchHistory`, persisted **server-side** in `search_history.db` (SQLite, next to `app.py` — same rationale/pattern as `download_history.db`: not under `tempfile.gettempdir()`, so it survives reboots and OS `/tmp` cleanups) via the `/api/history*` endpoints. This used to live only in the browser's `localStorage` (`scrapperx_search_history`); moving it server-side means the admin user's history/favorites are now shared across browsers/devices and survive a browser data wipe, instead of being tied to one browser profile. A history entry is identified by `platform+type+query+category`; re-running the same search moves it to the top (server-side `ts` bump) instead of duplicating, and preserves an existing favorite flag rather than replacing it with a fresh unstarred entry. Non-favorite entries are capped at `HISTORY_MAX` (30, oldest dropped first, enforced server-side in `_prune_search_history`); favorites are exempt from the cap and from "Limpar histórico" (which only clears non-favorite entries). The frontend no longer computes dedup/cap logic itself — every `/api/history*` call returns the full, current list, and the client just renders it.
 
 Clicking a history entry (`runHistoryEntry`) needs to both update the visible platform/type/query/category selectors *and* fire the search immediately — but React state setters are async, so `search()` reading `platform`/`query`/etc. from its own closure would still see the *previous* values on that same call. `search()` therefore accepts an optional `overrides` object that takes precedence over current state for that one invocation, while every existing caller (the search button, `Enter` in the query field, the auto-search effect on tab change) keeps calling `search()` with no arguments and behaves exactly as before. One consequence worth knowing if touching this code: `search` is called directly as `onClick={()=>search()}`, never bare as `onClick={search}` — React would pass the click's `SyntheticEvent` as `overrides` in that case, and since events carry a real `.type` property (`"click"`), `eType` would silently become the string `"click"` instead of falling back to state.
 
-Validated with a headless render test (jsdom + React 18, Babel-transforming the actual `index.html` script block) driving real DOM clicks/input events end-to-end: opening the empty history panel, running a search and confirming it's recorded with the right label, favoriting an entry, confirming "Limpar histórico" preserves it, and confirming clicking a history entry fires a fresh `/api/search` with the expected body.
+Validated with a Python test using Flask's test client: adding an entry, re-adding the same platform+type+query+category (dedup — count stays at 1, `ts` bumps), favoriting, "Limpar histórico" preserving the favorite, and deleting an entry.
 
 ### "Buscar em tudo" — searching every platform at once
 

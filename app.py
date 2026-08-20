@@ -118,6 +118,90 @@ def _mark_downloaded(results):
     for r in results:
         r["already_downloaded"] = r.get("url") in seen
     return results
+
+
+# ── Persistent search history / favorites ──────────────────────────────────
+# Same rationale/pattern as download_history.db above: lives next to app.py
+# (not tempfile.gettempdir()) so it survives reboots and OS /tmp cleanups.
+# Previously this lived only in the browser's localStorage — closing the
+# browser on one device meant the history/favorites weren't visible from
+# another, and a browser data wipe lost them entirely.
+SEARCH_HISTORY_DB = os.path.join(
+    os.path.abspath(os.path.dirname(os.path.realpath(__file__))), "search_history.db"
+)
+HISTORY_MAX = 30  # non-favorite entries kept; favorites are exempt from the cap
+
+
+def _search_history_conn():
+    conn = sqlite3.connect(SEARCH_HISTORY_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS search_history (
+        id TEXT PRIMARY KEY,
+        platform TEXT NOT NULL,
+        type TEXT,
+        query TEXT,
+        category TEXT,
+        favorite INTEGER NOT NULL DEFAULT 0,
+        ts REAL NOT NULL
+    )""")
+    return conn
+
+
+def _list_search_history():
+    conn = _search_history_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, platform, type, query, category, favorite, ts FROM search_history ORDER BY ts DESC"
+        ).fetchall()
+        return [
+            {"id": r[0], "platform": r[1], "type": r[2], "query": r[3],
+             "category": r[4] or None, "favorite": bool(r[5]), "ts": r[6]}
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def _prune_search_history(conn):
+    """Keeps every favorite plus the HISTORY_MAX most recent non-favorites,
+    deleting anything older — mirrors the cap the frontend used to enforce
+    itself against localStorage."""
+    rows = conn.execute("SELECT id FROM search_history WHERE favorite=0 ORDER BY ts DESC").fetchall()
+    stale = [r[0] for r in rows[HISTORY_MAX:]]
+    if stale:
+        placeholders = ",".join("?" for _ in stale)
+        conn.execute(f"DELETE FROM search_history WHERE id IN ({placeholders})", stale)
+
+
+def _add_search_history(entry):
+    """Same platform+type+query+category counts as re-running an existing
+    search: it moves to the top (ts bump) instead of duplicating, and keeps
+    its existing favorite flag rather than resetting it."""
+    platform = entry.get("platform") or ""
+    etype = entry.get("type") or ""
+    query = entry.get("query") or ""
+    category = entry.get("category") or ""
+    conn = _search_history_conn()
+    try:
+        row = conn.execute(
+            "SELECT id FROM search_history WHERE platform=? AND type=? AND query=? AND category=?",
+            (platform, etype, query, category),
+        ).fetchone()
+        ts = time.time()
+        if row:
+            conn.execute("UPDATE search_history SET ts=? WHERE id=?", (ts, row[0]))
+        else:
+            conn.execute(
+                "INSERT INTO search_history (id, platform, type, query, category, favorite, ts) "
+                "VALUES (?,?,?,?,?,0,?)",
+                (str(uuid.uuid4()), platform, etype, query, category, ts),
+            )
+        _prune_search_history(conn)
+        conn.commit()
+    finally:
+        conn.close()
+    return _list_search_history()
+
+
 session_state = {"logged_in": False, "username": "", "method": ""}
 
 # ── App-level login (gates the whole app — separate from the X cookie session above) ──
@@ -1911,6 +1995,62 @@ def health():
 def session_info():
     has_cookies = os.path.exists(COOKIES_FILE)
     return jsonify({**session_state, "has_cookies": has_cookies, "download_dir": DOWNLOAD_DIR})
+
+# ── Search history / favorites ─────────────────────────────────────────────
+# Server-side (SQLite), replacing the old localStorage-only version — see
+# _add_search_history/_list_search_history above. Every endpoint returns the
+# full, up-to-date list so the frontend doesn't need to re-derive dedup/cap
+# logic itself; the server is now the single source of truth.
+
+@app.route("/api/history")
+def get_history():
+    return jsonify(_list_search_history())
+
+
+@app.route("/api/history", methods=["POST"])
+def add_history():
+    entry = request.json or {}
+    if not entry.get("platform"):
+        return jsonify({"error": "platform é obrigatório."}), 400
+    return jsonify(_add_search_history(entry))
+
+
+@app.route("/api/history/<hid>/favorite", methods=["POST"])
+def favorite_history(hid):
+    conn = _search_history_conn()
+    try:
+        row = conn.execute("SELECT favorite FROM search_history WHERE id=?", (hid,)).fetchone()
+        if not row:
+            return jsonify({"error": "not_found"}), 404
+        conn.execute("UPDATE search_history SET favorite=? WHERE id=?", (0 if row[0] else 1, hid))
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify(_list_search_history())
+
+
+@app.route("/api/history/<hid>", methods=["DELETE"])
+def delete_history(hid):
+    conn = _search_history_conn()
+    try:
+        conn.execute("DELETE FROM search_history WHERE id=?", (hid,))
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify(_list_search_history())
+
+
+@app.route("/api/history/clear", methods=["POST"])
+def clear_history():
+    """Clears only non-favorite entries — mirrors "Limpar histórico" in the UI,
+    which has always preserved starred entries."""
+    conn = _search_history_conn()
+    try:
+        conn.execute("DELETE FROM search_history WHERE favorite=0")
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify(_list_search_history())
 
 # ── Auth endpoints ────────────────────────────────────────────────────────────
 
