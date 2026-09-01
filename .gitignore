@@ -7,6 +7,9 @@ __pycache__/
 .env.local
 .flask_secret_key
 
+# Pasta de download escolhida pelo usuário (config local, não código-fonte)
+.download_dir
+
 # Cookies do X (ficam em /tmp, mas por precaução)
 x_cookies.txt
 

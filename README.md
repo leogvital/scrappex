@@ -2,7 +2,7 @@
 
 *[Leia em português](README.pt-BR.md)*
 
-Local web application to search and download videos from **X (Twitter)**, **XHamster**, **XVideos**, **xFree** and **Pornhub**.
+Local web application to search and download videos from **X (Twitter)**, **XHamster**, **XVideos**, **xFree**, **Pornhub**, **XNXX** and **TNAFlix**.
 
 > See [ROADMAP.md](ROADMAP.md) for what's already done and what's planned next.
 
@@ -31,11 +31,11 @@ The backend serves both the API (`/api/*`) and the frontend (`/`) in the same pr
 |---|---|
 | Server | Flask 3 + Gunicorn (1 worker, `gthread`, 4 threads, 600 s timeout) — **Linux/Mac**. On **Windows**, Gunicorn doesn't run (it uses `fork()`, which doesn't exist there); Waitress is used instead, with `--threads 4` for the same reason |
 | X and xFree scraping | Selenium + headless Chrome (WebDriver Manager) |
-| XHamster/XVideos/Pornhub scraping | `requests` (direct HTTP) |
+| XHamster/XVideos/Pornhub/XNXX scraping | `requests` (direct HTTP) |
 | Video download | yt-dlp |
 | Frontend | React 18 + standalone Babel (zero build step) |
 | Cookie storage | Netscape-format file at `/tmp/x_cookies.txt` |
-| Downloaded videos | `~/Downloads/X-Videos/` |
+| Downloaded videos | `~/Downloads/X-Videos/` by default — configurable, see [Download Folder](#download-folder) |
 
 **Why `gthread` + `--threads 4`**: Gunicorn's default `sync` worker processes **one request at a time** — while a slow search is in progress (Selenium scrolling on X/xFree, for example), no other request is even accepted, including `/api/download/start`. That's exactly what caused downloads to hang when clicked while more videos were auto-loading. `gthread` keeps a single process (preserving the in-memory global state — `_SS`, `_XF_SS`, `_SITE_SS`, `download_progress` — which isn't shareable across processes without an external store like Redis) but processes up to 4 requests in parallel within it, since most of the work here is I/O (waiting on Selenium, waiting on HTTP responses) and releases the GIL during those waits.
 
@@ -243,17 +243,51 @@ Direct HTML page scraping, no headless browser (`_scrape_pornhub`). Two tabs —
 - **Cross-page dedup**: Pornhub's category pagination repeats a few promoted items across consecutive pages (confirmed directly over HTTP, outside the app). Because of this, `_SITE_SS` (also used by XHamster/XVideos) gained a `seen_ids` set that filters out already-seen IDs before returning each page.
 - **Thumbnail**: Home/trending cards use a different attribute (`data-mediumthumb`) than search cards (`data-image`) — `_scrape_pornhub` tries both before falling back to the `<img>`'s plain `src`, otherwise several previews would show up blank on Home.
 
+### XNXX (www.xnxx.com) — via HTTP
+Direct HTML page scraping, no headless browser (`_scrape_xnxx`). Two tabs — Home and Search — plus a category, all funneled through the same `/search/...` path (unlike Pornhub's per-orientation subdomains/paths):
+
+| Category | Browse (Home) | Keyword search |
+|---|---|---|
+| ❤️ Straight | `/search/straight` | `/search/<query>` |
+| 🏳️‍🌈 Gay | `/search/gay` | `/search/gay/<query>` |
+| 🏳️‍🌈 Sapphic | `/search/lesbian` | **no dedicated endpoint** |
+| 🏳️‍⚧️ Trans | `/search/shemale` | `/search/shemale/<query>` |
+
+- **Category as a path segment, not a subdomain**: Gay and Trans are recognized "orientation filter" segments the search endpoint understands — prepending `gay` or `shemale` before the query narrows results to that orientation. "Sapphic" maps to the `lesbian` *tag* instead, which the site only recognizes as a lone segment — combining it with a second query segment gets silently dropped (the site falls back to a plain, unfiltered search on the query alone), confirmed by testing directly against the site outside the app.
+- **Sapphic ignores the typed query** for the same reason Pornhub's Trans does: no combinable keyword-search endpoint exists, so Search browses the `lesbian` tag's feed and warns the user in the UI instead of silently losing the category filter.
+- Pagination is 1-based via an extra trailing segment (`/search/<query>/2`, `/search/gay/2`, etc.), the same for every category and for Home/Search.
+- **Card selector matters**: the page mixes real video cards (`class="thumb-block  with-uploader"`) with decorative/suggestion placeholder blocks (`class="thumb-block thumb-cat"`, no video data) — `_scrape_xnxx` matches on the more specific `with-uploader` class specifically to skip those; matching the bare `thumb-block` class would parse zero real results on Home/category pages, where placeholders can outnumber (or on some pages, entirely replace) actual cards.
+- **Views use pt-BR number formatting** (comma as decimal separator, e.g. `12,7M`) unlike Pornhub's English formatting (`1.1M`) — `_parse_xnxx_views` handles this separately from `_parse_pornhub_views`.
+- **Sort and duration are further combinable segments** — confirmed against the live site: `/search/gay/hits/10min+/<query>` chains orientation + sort + duration + query together in one request, in that order, for both Home and Search. `sort` maps to `hits` (most viewed) / `month` / `year` / `random`; `duration` maps to `0-10min` / `10-20min` / `20min+`. Sapphic is the one exception — being a lone tag (see above), it drops *any* second segment, sort/duration included, not just a query, so both selects are disabled in the UI when it's chosen.
+- **Not double-filtered**: since XNXX already filters duration server-side with its own bands (`medium` = 10-20min here, vs. xHamster/XVideos' shared client-side filter using 10-30min for the same label), `search_site_page` skips its generic post-fetch duration filter entirely for `xnxx`/`tnaflix` — running both would silently drop results the site had already correctly returned (e.g. a 29-minute video correctly placed in XNXX's "Longo" bucket would get cut by the generic filter's `>30min` threshold for "long").
+
+### TNAFlix (www.tnaflix.com) — via HTTP
+Direct HTML page scraping, no headless browser (`_scrape_tnaflix`). Two tabs — Home and Search — plus a category:
+
+| Category | Browse (Home) | Keyword search |
+|---|---|---|
+| ❤️ Straight | homepage (`/`) | `/search?what=<query>` |
+| 🏳️‍🌈 Gay | `/gay-porn` | **no dedicated endpoint** |
+| 🏳️‍🌈 Sapphic | `/lesbian-porn` | **no dedicated endpoint** |
+| 🏳️‍⚧️ Trans | `/shemale-porn` | **no dedicated endpoint** |
+
+- **No category+keyword combination at all**, unlike XNXX (where 2 of 3 non-default categories combine with a query) or Pornhub (where only Trans lacks it) — confirmed against the live site: `/<tag>/search?what=...` 404s, and the search box rendered on every category page still posts to the same site-wide `/search`. So here, **any** non-straight category always browses its tag page and ignores whatever was typed, not just one edge case.
+- **Home/category pages don't paginate at all** — confirmed directly against the site: the homepage and every `/<tag>-porn` page return byte-for-byte the same 60 cards on `?page=2` as `?page=1`. Only straight keyword search (`/search?what=...`) actually paginates with new results per page. `search_task_start`'s route forces `has_more=False` whenever `not q or category != "straight"`, mirroring the same fix already in place for XVideos' non-paginating category landing page.
+- **Card selector**: each result is a `<div data-vid="...">` wrapper — split directly on that attribute rather than a generic content class, since the id is already sitting right there in the marker being matched on.
+- **Views use English dot-decimal formatting** (e.g. `33.2K`) — same as Pornhub, so `_scrape_tnaflix` reuses `_parse_pornhub_views` instead of a third near-identical parser.
+- **Sort and duration exist, but only apply to Home/category browsing** — confirmed against the live site: the search results page renders the exact same "Duration"/"Uploaded" dropdowns as a category page, but `?d=`/`?u=` have zero effect there (identical result IDs with or without them on the same `what=` query); only a Home/category request actually honors `?d=` (its sort is a path segment instead — `featured`/`new`/`toprated` on the homepage vs. `featured`/`most-recent`/`top-rated` on a `/<tag>-porn` page, two different slug sets for the same three options). So the frontend only shows the sort/duration selects while the Home tab is active, and `search()` doesn't send them at all for a keyword search.
+
 ---
 
 ## Background Search
 
-A fresh search — especially X/xFree via Selenium, or "buscar em tudo" running all 5 platforms one after another — can take anywhere from a few seconds to well over a minute. That used to mean the whole wait lived inside one blocking `fetch()` on the client; if the tab got backgrounded (phone screen locks, user switches app), mobile browsers throttle or fully suspend JS and networking, and the in-flight request either stalls indefinitely or gets dropped outright, losing the search. Same fix as [background downloads](#video-download): the actual work moves into a server-side thread that keeps running regardless of what the client tab does.
+A fresh search — especially X/xFree via Selenium, or "buscar em tudo" running all 7 platforms one after another — can take anywhere from a few seconds to well over a minute. That used to mean the whole wait lived inside one blocking `fetch()` on the client; if the tab got backgrounded (phone screen locks, user switches app), mobile browsers throttle or fully suspend JS and networking, and the in-flight request either stalls indefinitely or gets dropped outright, losing the search. Same fix as [background downloads](#video-download): the actual work moves into a server-side thread that keeps running regardless of what the client tab does.
 
 `/api/search/start` and `/api/search/start_all` kick off the real work in a background thread and return a `task_id` immediately; the client polls `GET /api/search/task/<tid>` every 1.5s until it reports `"complete"` or `"error"`. The `task_id` is persisted to `localStorage` (`scrapperx_search_task` / `scrapperx_search_all_task`) while a search is in flight, and a mount-time effect in `App` checks for one and resumes polling if found — closing the tab, or the OS killing a backgrounded one outright, and reopening later reconnects to a search that kept running server-side the entire time, with results ready as soon as it finishes. `/api/search` itself is untouched and still works exactly as before for a synchronous call — nothing was removed, only added.
 
 **Reusing the existing view instead of duplicating it**: `_call_search_view(body)` invokes the existing `search()` Flask view function via `app.test_request_context(...)`, which synthesizes a real request/app context so `request.json` etc. work normally inside — then `app.make_response()` normalizes whatever the view returned (a bare `Response`, or a `(body, status)` tuple, exactly like Flask's own dispatcher would for a real HTTP request) into a consistent `(status_code, dict)` pair. This reuses every branch of the existing search logic (xfree/xhamster/xvideos/pornhub/X, retry logic, session bookkeeping) verbatim from a background thread, rather than re-implementing any of it for async execution.
 
-**The aggregate case moved server-side entirely**, not just wrapped: `_run_aggregate_search_task()` loops through all 5 platforms sequentially *inside the background thread*, calling `_call_search_view()` for each and accumulating tagged results, per-platform `search_id`s, and per-platform `has_more` into the task's state as it goes — mirroring exactly what the old client-side `for` loop used to do, just moved off the tab. This mattered specifically because a client-side `await`-based loop is JS running in the tab, which is exactly what gets suspended when a mobile browser backgrounds it; keeping the loop client-side while only the individual `/api/search` calls became async would have defeated the whole point for the slowest, most-likely-to-be-left-running search mode. A platform that errors doesn't abort the run — the loop just moves on to the next one, same tolerance the old client-side version had.
+**The aggregate case moved server-side entirely**, not just wrapped: `_run_aggregate_search_task()` loops through all 7 platforms sequentially *inside the background thread*, calling `_call_search_view()` for each and accumulating tagged results, per-platform `search_id`s, and per-platform `has_more` into the task's state as it goes — mirroring exactly what the old client-side `for` loop used to do, just moved off the tab. This mattered specifically because a client-side `await`-based loop is JS running in the tab, which is exactly what gets suspended when a mobile browser backgrounds it; keeping the loop client-side while only the individual `/api/search` calls became async would have defeated the whole point for the slowest, most-likely-to-be-left-running search mode. A platform that errors doesn't abort the run — the loop just moves on to the next one, same tolerance the old client-side version had.
 
 **Deliberately out of scope**: `/api/search/more` (pagination / "load more") stays synchronous. It's typically fast (one page, not a fresh multi-scroll gather) and triggered by explicit engagement (scrolling near the bottom, or clicking a button) while the user is already looking at results on screen — a different situation from "I started a search and want to walk away," which is what this feature targets.
 
@@ -284,7 +318,7 @@ Validated at three levels: a Python test using Flask's test client confirming a 
 | POST | `/api/search` | Search videos (first page), synchronous |
 | POST | `/api/search/more` | Load next page, synchronous |
 | POST | `/api/search/start` | Start a single-platform search as a background task |
-| POST | `/api/search/start_all` | Start a "buscar em tudo" (all 5 platforms) search as a background task |
+| POST | `/api/search/start_all` | Start a "buscar em tudo" (all 7 platforms) search as a background task |
 | GET | `/api/search/task/<tid>` | Poll a background search task's status/results |
 | GET | `/api/history` | List search history/favorites (server-side, SQLite) |
 | POST | `/api/history` | Record a search into history (dedups by platform+type+query+category) |
@@ -298,7 +332,7 @@ Validated at three levels: a Python test using Flask's test client confirming a 
 | POST | `/api/download/pause/<tid>` | Pause a running download |
 | POST | `/api/download/cancel/<tid>` | Cancel a running or paused download |
 | GET | `/api/download/file/<tid>` | Serve the downloaded file |
-| GET | `/api/library` | List videos in the downloads folder |
+| GET | `/api/library` | List videos in the downloads folder, plus free disk space |
 | GET | `/api/library/video/<name>` | Serve a library video (streaming) |
 | POST | `/api/library/delete` | Delete a video from the library |
 
@@ -332,9 +366,9 @@ Validated with a Python test using Flask's test client: adding an entry, re-addi
 
 ### "Buscar em tudo" — searching every platform at once
 
-A 6th button in the platform selector, "🌐 Tudo", switches into `searchAllMode`: a single query box searches X, xHamster, XVideos, xFree, and Pornhub with `searchAllPlatforms()`. Each platform's `/api/search` call runs **sequentially inside a `for` loop, not `Promise.all`** — this is deliberate, not an oversight. Unlike X and xFree (each with their own dedicated session dict, `_SS`/`_XF_SS`), xHamster, XVideos, and Pornhub are plain HTTP scrapers sharing the `_SITE_SS` machinery; firing two of those three concurrently would have the second response's session update clobber the first one's in-flight pagination state mid-write. Running everything sequentially sidesteps that race entirely rather than special-casing which platform pairs are actually safe to parallelize.
+A 6th button in the platform selector, "🌐 Tudo", switches into `searchAllMode`: a single query box searches X, xHamster, XVideos, xFree, Pornhub, and XNXX with `searchAllPlatforms()`. Each platform's `/api/search` call runs **sequentially inside a `for` loop, not `Promise.all`** — this is deliberate, not an oversight. Unlike X and xFree (each with their own dedicated session dict, `_SS`/`_XF_SS`), xHamster, XVideos, Pornhub, and XNXX are plain HTTP scrapers sharing the `_SITE_SS` machinery; firing two of those concurrently would have the second response's session update clobber the first one's in-flight pagination state mid-write. Running everything sequentially sidesteps that race entirely rather than special-casing which platform pairs are actually safe to parallelize.
 
-Results stream in as each platform finishes (`setAllResults(prev => [...prev, ...tagged])` after every platform, not once at the end) rather than waiting for all 5 before showing anything. Each result is tagged with `_platform` on the way in; `VideoCard` renders a small badge from `PLATFORM_LABEL` when that field is present, and is otherwise unaffected — the card, `FormatModal`, and the download flow all only ever depended on `video.url`, never on the outer `platform` state, so mixing results from five different platforms in one grid needed no changes there.
+Results stream in as each platform finishes (`setAllResults(prev => [...prev, ...tagged])` after every platform, not once at the end) rather than waiting for all 6 before showing anything. Each result is tagged with `_platform` on the way in; `VideoCard` renders a small badge from `PLATFORM_LABEL` when that field is present, and is otherwise unaffected — the card, `FormatModal`, and the download flow all only ever depended on `video.url`, never on the outer `platform` state, so mixing results from five different platforms in one grid needed no changes there.
 
 **Per-platform "load more"**: `allSearchIds`/`allHasMore`/`allLoadingMore` track each platform's own `search_id` and pagination state independently, and `loadMoreAllPlatform(platform)` calls `/api/search/more` with that specific platform's `search_id`. This only became reliable once `_SITE_SS` on the backend changed from one shared dict to a dict keyed by site (`_SITE_SS["xhamster"]`, `_SITE_SS["xvideos"]`, `_SITE_SS["pornhub"]`), each looked up by matching `search_id` instead of assumed to be "whichever site searched most recently." With the old single shared slot, two of the three site platforms would *always* have an already-evicted session by the time the aggregate search finished (whichever ran before the last one in the sequential loop), making their "load more" permanently broken rather than just occasionally racy — this wasn't visible before "buscar em tudo" existed, since only one platform's results were ever on screen at a time.
 
@@ -363,7 +397,17 @@ Contrast was checked programmatically (WCAG relative-luminance formula) rather t
 - **Background**: closing the modal during a download lets the task keep running, shown in the `BgTray`
 - **Survives closing the browser**: the download runs in a `threading.Thread` on the server process (`download_task` in `app.py`), fully decoupled from the HTTP connection — closing the tab/browser doesn't interrupt it. What was missing was the *frontend* remembering which tasks were in progress: `bgRef`/`bgTasks` are now mirrored to `localStorage` (`scrapperx_bg_tasks`) on every progress update, and a `useEffect` on `App`'s mount reads that list back and resumes polling — reopening the browser reconnects to the real progress. If the *server* restarts mid-download (not just the browser), the in-memory progress (`download_progress`) is lost; the UI detects this (a `not_found` response) and marks the task as an error instead of polling forever.
 - Supported formats: `best`, up to 1080p, up to 720p, up to 480p
-- Output: `~/Downloads/X-Videos/<title>_<id>.mp4`
+- Output: `<DOWNLOAD_DIR>/<title>_<id>.mp4` — `~/Downloads/X-Videos/` by default, but configurable (see below)
+
+### Download Folder
+
+`DOWNLOAD_DIR` used to be a constant computed once at import time; it's now a module-level global that can be changed at runtime and persists across restarts — via `.download_dir`, a plain text file next to `app.py`, read on boot the same way `.flask_secret_key` is (falling back to the default `~/Downloads/X-Videos` — and creating it — if nothing was ever saved, or if the saved path isn't usable right now, e.g. a USB drive that's unplugged at boot).
+
+- `GET /api/settings/download-dir` returns the current folder plus the default one (so the UI has something to offer as a "reset" option without hardcoding it a second time on the frontend).
+- `POST /api/settings/download-dir` with `{"path": "..."}` validates the new folder — `os.makedirs(path, exist_ok=True)` (creates it if missing, catching a mounted-but-read-only or a genuinely invalid path as an `OSError`), confirms it's actually a directory, and confirms `os.access(path, os.W_OK)` — before reassigning the `DOWNLOAD_DIR` global and persisting the choice. Any of those checks failing returns a specific error message instead of a generic failure.
+- **Reassigning the global is enough** — every consumer (`download_task`'s thread arg, `/api/library`, the disk-usage `disk` field, `_library_path`) reads `DOWNLOAD_DIR` as a plain global lookup at call time, not at import time, so nothing else needed to change to make the switch take effect immediately for anything started *after* the change.
+- **Doesn't move anything**: switching folders only changes where new downloads land and what the Library/disk-usage bar look at — files already sitting in the old folder stay exactly where they are, they just stop showing up in "Meus Vídeos" until you switch back.
+- Frontend: the download-folder path in the header (previously just static text) is now a button — clicking it opens `DownloadDirModal`, a free-text path input (not a native folder picker, since the server may be headless with no desktop of its own to browse from) with a "usar padrão" shortcut and the same not-a-move warning inline.
 
 ### Pause, cancel, and resume
 
@@ -392,6 +436,10 @@ Validated with a Python test covering: a recorded download is found by URL looku
 Each card in "Meus Vídeos" used to show only a static play icon on a blank background — no indication at all of which video it was without opening it. `LibraryCard` now renders a `<video preload="metadata">` pointed directly at `/api/library/video/<name>` (the same range-request-capable streaming endpoint the fullscreen `PlayerModal` already used) — `preload="metadata"` alone makes the browser display the first frame as a static thumbnail without downloading the whole file, even before any interaction, and hovering plays it (muted, looped) for a real live preview. Unlike `VideoCard`'s remote-preview flow, which needs a `POST /api/preview` round-trip to resolve a playable URL for a video hosted on someone else's site, a library item's own file already *is* the direct playable URL, so there's no extra request involved at all.
 
 Validated with a headless render test (jsdom doesn't implement real media decoding, so `HTMLMediaElement.prototype.play`/`pause` are spied on rather than exercised for real): each library card renders a `<video>` pointed at the correct streaming URL, hovering a card calls `.play()`, and un-hovering calls `.pause()`.
+
+### Free disk space in the Library
+
+`GET /api/library` now also returns a `disk` field — `shutil.disk_usage(DOWNLOAD_DIR)` converted to GB (total/used/free) plus a `free_pct` — computed for whichever filesystem actually backs `DOWNLOAD_DIR`, not the server's root filesystem, so it stays correct even if downloads live on a separate mount (an external drive, a bind-mounted volume, etc.). `DiskUsageBar` renders it as a small usage bar above the video grid in "Meus Vídeos" — shown on the loading/empty states too, not just once there are videos, since low free space is exactly the kind of thing worth seeing before you've downloaded anything. The bar turns amber under 20% free and red under 10%, as an early low-space warning.
 
 ### Pornhub needs TLS impersonation
 yt-dlp's native Pornhub extractor gets `403 Forbidden` when downloading the video page — it's a TLS *fingerprint* block (JA3/JA4), not an HTTP-header block (confirmed: the same headers via plain `requests` work fine; only yt-dlp's network stack gets blocked). The fix is making yt-dlp mimic a real Chrome TLS handshake via `curl_cffi`:

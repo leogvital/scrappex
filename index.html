@@ -97,7 +97,7 @@
 
     // Shared platform label map — used by VideoCard's badge in "buscar em
     // tudo" results and by the search-history labels inside App.
-    const PLATFORM_LABEL = {x:"𝕏",xhamster:"xHamster",xvideos:"XVideos",xfree:"xFree",pornhub:"Pornhub",all:"🌐 Tudo"};
+    const PLATFORM_LABEL = {x:"𝕏",xhamster:"xHamster",xvideos:"XVideos",xfree:"xFree",pornhub:"Pornhub",xnxx:"XNXX",tnaflix:"TNAFlix",all:"🌐 Tudo"};
 
     const Spin = ({size=20,color="#1d9bf0"}) => (
       <div style={{width:size,height:size,border:"2px solid rgba(255,255,255,0.12)",borderTopColor:color,borderRadius:"50%",animation:"spin .7s linear infinite",flexShrink:0}}/>
@@ -1007,7 +1007,11 @@
     }
 
     // ── Library: downloaded videos grid ─────────────────────────────────────
-    function LibraryGrid({ items, loading, err, onOpen }) {
+    // `disk` (free/used/total space on the volume backing DOWNLOAD_DIR) is
+    // shown whenever it's available, even on the empty/loading states — low
+    // free space is exactly the kind of thing you want visible before you've
+    // even downloaded anything, not just after the grid has content.
+    function LibraryGrid({ items, loading, err, disk, onOpen }) {
       if (loading) {
         return (
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"60px 0",color:"var(--text-2)"}}>
@@ -1020,7 +1024,8 @@
           <div style={{textAlign:"center",paddingTop:48,color:"var(--text-2)"}}>
             <div style={{fontSize:44,marginBottom:14,opacity:.35}}>📁</div>
             <div style={{fontSize:15,fontWeight:500,color:"var(--border-2)",marginBottom:6}}>Nenhum vídeo baixado</div>
-            <div style={{fontSize:13}}>{err||"Os vídeos baixados aparecerão aqui."}</div>
+            <div style={{fontSize:13,marginBottom:disk?14:0}}>{err||"Os vídeos baixados aparecerão aqui."}</div>
+            {disk&&<DiskUsageBar disk={disk}/>}
           </div>
         );
       }
@@ -1029,8 +1034,28 @@
           <div style={{marginBottom:16,fontSize:14,color:"var(--text)",fontWeight:600}}>
             {items.length} vídeo{items.length!==1?"s":""} baixado{items.length!==1?"s":""}
           </div>
+          {disk&&<DiskUsageBar disk={disk}/>}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:13}}>
             {items.map((it,i)=><LibraryCard key={it.name} item={it} onOpen={()=>onOpen(i)}/>)}
+          </div>
+        </div>
+      );
+    }
+
+    // Free-space indicator for the volume backing DOWNLOAD_DIR (server-side —
+    // GET /api/library's `disk` field, from shutil.disk_usage). Below 10% free
+    // the bar turns red as a low-space warning; below 20% it turns amber.
+    function DiskUsageBar({ disk }) {
+      const usedPct = 100 - disk.free_pct;
+      const color = disk.free_pct < 10 ? "#f4212e" : disk.free_pct < 20 ? "#ffad1f" : "#1d9bf0";
+      return (
+        <div style={{marginBottom:16,padding:"10px 14px",background:"var(--bg-input)",border:"1px solid var(--border)",borderRadius:10}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6,fontSize:12,color:"var(--text-2)"}}>
+            <span>💾 {disk.free_gb} GB livres de {disk.total_gb} GB</span>
+            <span>{disk.free_pct}% livre</span>
+          </div>
+          <div style={{height:6,borderRadius:9999,background:"var(--border)",overflow:"hidden"}}>
+            <div style={{height:"100%",width:usedPct+"%",background:color,borderRadius:9999,transition:"width .3s"}}/>
           </div>
         </div>
       );
@@ -1385,8 +1410,74 @@
       );
     }
 
+    // Server-side setting (persisted to .download_dir, see app.py) — lets the
+    // user point downloads at a mounted USB drive or any other folder instead
+    // of the default ~/Downloads/X-Videos. Deliberately a free-text path
+    // input rather than a native folder picker: the server has no desktop UI
+    // of its own to browse from (it may be headless), so the user supplies
+    // the mount path directly (e.g. /media/usb on Linux, D:\Videos on Windows).
+    function DownloadDirModal({ current, onClose, onSaved }) {
+      const [defaultDir, setDefaultDir] = useState("");
+      const [path, setPath]             = useState(current || "");
+      const [err, setErr]               = useState("");
+      const [saving, setSaving]         = useState(false);
+
+      useEffect(()=>{
+        fetch(API+"/settings/download-dir").then(r=>r.json())
+          .then(d=>setDefaultDir(d.default_download_dir||"")).catch(()=>{});
+      },[]);
+
+      async function save(){
+        if(!path.trim()||saving) return;
+        setSaving(true); setErr("");
+        try{
+          const r = await fetch(API+"/settings/download-dir",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:path.trim()})});
+          const d = await r.json();
+          if(d.success){ onSaved(d.download_dir); onClose(); }
+          else setErr(d.error||"Erro ao salvar.");
+        }catch{ setErr("Erro de conexão."); }
+        setSaving(false);
+      }
+
+      const OVL = {position:"fixed",inset:0,background:"rgba(0,0,0,.78)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,backdropFilter:"blur(4px)"};
+      const BOX = {background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:16,width:"calc(100% - 32px)",maxWidth:480,overflow:"hidden",boxShadow:"0 24px 64px rgba(0,0,0,.6)"};
+
+      return (
+        <div style={OVL} onClick={e=>e.target===e.currentTarget&&onClose()}>
+          <div style={BOX}>
+            <div style={{padding:"14px 20px",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span style={{color:"var(--text)",fontWeight:700,fontSize:15}}>📁 Pasta de downloads</span>
+              <button onClick={onClose} style={{background:"none",border:"none",color:"var(--text-2)",cursor:"pointer",display:"flex"}}><CloseI/></button>
+            </div>
+            <div style={{padding:"16px 20px"}}>
+              {err&&(
+                <div style={{background:"rgba(244,33,46,.08)",border:"1px solid rgba(244,33,46,.3)",borderRadius:8,padding:"10px 14px",color:"#f4212e",fontSize:13,marginBottom:14,lineHeight:1.5}}>{err}</div>
+              )}
+              <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Caminho completo (ex: um pendrive montado em /media/usb, ou D:\Videos no Windows)</label>
+              <input value={path} onChange={e=>setPath(e.target.value)} placeholder={defaultDir} spellCheck={false}
+                style={{width:"100%",padding:"10px 12px",background:"var(--bg-input)",border:"1px solid var(--border)",borderRadius:8,color:"var(--text)",fontSize:13,marginBottom:12,fontFamily:"monospace",boxSizing:"border-box"}}/>
+              <div style={{fontSize:12,color:"var(--text-2)",lineHeight:1.5,marginBottom:16}}>
+                A pasta precisa já existir (ou poder ser criada) e ter permissão de escrita. Trocar a pasta <strong style={{color:"var(--text-3)"}}>não move</strong> os vídeos já baixados — eles continuam onde estavam, só deixam de aparecer em "Meus Vídeos" até você voltar pra pasta antiga.
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",gap:10}}>
+                <button onClick={()=>setPath(defaultDir)} disabled={!defaultDir||saving}
+                  style={{padding:"9px 16px",borderRadius:9999,border:"1px solid var(--border-2)",background:"transparent",color:"var(--text-2)",fontSize:13,cursor:(!defaultDir||saving)?"not-allowed":"pointer"}}>
+                  Usar padrão
+                </button>
+                <button onClick={save} disabled={saving||!path.trim()}
+                  style={{padding:"9px 22px",borderRadius:9999,border:"none",background:(saving||!path.trim())?"var(--border)":"#1d9bf0",color:(saving||!path.trim())?"var(--text-2)":"#fff",fontSize:14,fontWeight:700,cursor:(saving||!path.trim())?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:8}}>
+                  {saving?<><Spin size={14} color="#fff"/>Salvando…</>:"Salvar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     function App({ theme, onToggleTheme }) {
       const [session,   setSession]   = useState(null);
+      const [showDirModal, setShowDirModal] = useState(false);
       const [query,     setQuery]     = useState("");
       const [type,      setType]      = useState("keyword");
       const count = 20; // vídeos por página
@@ -1404,6 +1495,18 @@
       const [xfCategory,  setXfCategory]  = useState("straight"); // xFree: straight | gay | trans | all
       const [phCategory,  setPhCategory]  = useState("straight"); // Pornhub: straight | gay | sapphic | trans
       const [siteCategory,setSiteCategory]= useState("straight"); // xHamster/XVideos: straight | gay | trans
+      const [xnCategory,  setXnCategory]  = useState("straight"); // XNXX: straight | gay | sapphic | trans
+      // XNXX has its own combinable sort/duration segments (applies to Home
+      // and Busca, except Sapphic which drops any extra segment) — separate
+      // from siteSort/siteDuration since xHamster/XVideos work differently.
+      const [xnSort,      setXnSort]      = useState("relevance"); // relevance | views | month | year | random
+      const [xnDuration,  setXnDuration]  = useState("any");       // any | short | medium | long
+      const [tfCategory,  setTfCategory]  = useState("straight"); // TNAFlix: straight | gay | sapphic | trans
+      // TNAFlix's sort/duration only apply to Home/category browsing — no
+      // effect on keyword search at all (confirmed against the site), so
+      // these are only read/shown while the Home tab is active.
+      const [tfSort,      setTfSort]      = useState("featured");  // featured | newest | top
+      const [tfDuration,  setTfDuration]  = useState("any");       // any | short | medium | long | full
       const [checked,     setChecked]     = useState(new Set()); // multi-select IDs
       const [bulkFmt,     setBulkFmt]     = useState("best");
       const [bulkTasks,   setBulkTasks]   = useState(null);    // null | task array
@@ -1414,6 +1517,7 @@
       const [library,    setLibrary]    = useState([]);
       const [libLoading, setLibLoading] = useState(false);
       const [libErr,     setLibErr]     = useState("");
+      const [libDisk,    setLibDisk]    = useState(null); // {total_gb,used_gb,free_gb,free_pct} | null
       const [playerIdx,  setPlayerIdx]  = useState(null); // index into library, or null
 
       async function loadLibrary(){
@@ -1422,6 +1526,7 @@
           const r = await fetch(API+"/library");
           const d = await r.json();
           setLibrary(d.items||[]);
+          setLibDisk(d.disk||null);
           if(!d.items?.length) setLibErr("Nenhum vídeo baixado encontrado.");
         }catch{ setLibErr("Erro de conexão."); }
         setLibLoading(false);
@@ -1503,6 +1608,8 @@
         setQuery(h.query||"");
         if (h.platform==="xfree")   setXfCategory(h.category||"straight");
         if (h.platform==="pornhub") setPhCategory(h.category||"straight");
+        if (h.platform==="xnxx")    setXnCategory(h.category||"straight");
+        if (h.platform==="tnaflix") setTfCategory(h.category||"straight");
         if (h.platform==="xhamster"||h.platform==="xvideos") setSiteCategory(h.category||"straight");
         search({platform:h.platform, type:h.type, query:h.query||"", category:h.category});
       }
@@ -1654,7 +1761,7 @@
         if (firstRenderRef.current) { firstRenderRef.current = false; return; }
         if (platform === "x" && (type === "home" || type === "following")) search();
         if (platform !== "x" && type === "home") search();
-      }, [type, platform, xfCategory, phCategory, siteCategory]); // eslint-disable-line
+      }, [type, platform, xfCategory, phCategory, xnCategory, xnSort, xnDuration, tfCategory, tfSort, tfDuration, siteCategory]); // eslint-disable-line
 
       // Auto-scroll infinito: carrega mais ao chegar perto do fim da página
       useEffect(()=>{
@@ -1726,10 +1833,12 @@
         const eCategory = overrides && "category" in overrides ? overrides.category
                          : ePlatform==="xfree" ? xfCategory
                          : ePlatform==="pornhub" ? phCategory
+                         : ePlatform==="xnxx" ? xnCategory
+                         : ePlatform==="tnaflix" ? tfCategory
                          : (ePlatform==="xhamster"||ePlatform==="xvideos") ? siteCategory
                          : undefined;
         const needQuery = ePlatform==="x"                                          ? (eType!=="home" && eType!=="following")
-                        : (ePlatform==="xfree"||ePlatform==="pornhub"||ePlatform==="xhamster"||ePlatform==="xvideos") ? eType!=="home"
+                        : (ePlatform==="xfree"||ePlatform==="pornhub"||ePlatform==="xnxx"||ePlatform==="tnaflix"||ePlatform==="xhamster"||ePlatform==="xvideos") ? eType!=="home"
                         : true;
         if(needQuery&&!eQuery.trim()) return;
         setSearching(true); setErr(""); setResults([]); setHasMore(false); setSearchId(null); clearChecked();
@@ -1740,7 +1849,11 @@
               ? {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,category:eCategory,count}
               : ePlatform==="pornhub"
                 ? {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,category:eCategory,count}
-                : {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,sort:siteSort,duration:siteDuration,category:eCategory,count};
+                : ePlatform==="xnxx"
+                  ? {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,category:eCategory,sort:xnSort,duration:xnDuration,count}
+                  : ePlatform==="tnaflix"
+                    ? {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,category:eCategory,sort:tfSort,duration:tfDuration,count}
+                    : {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,sort:siteSort,duration:siteDuration,category:eCategory,count};
           const r=await fetch(API+"/search/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
           const {task_id}=await r.json();
           const meta = {platform:ePlatform, type:eType, query:eQuery.trim(), category:eCategory};
@@ -1768,7 +1881,7 @@
       // a time. Sequential on purpose: xHamster/XVideos/Pornhub all share one
       // backend session slot (_SITE_SS), so firing them concurrently would
       // have one clobber another's in-progress pagination state.
-      const ALL_PLATFORMS = ["x","xhamster","xvideos","xfree","pornhub"];
+      const ALL_PLATFORMS = ["x","xhamster","xvideos","xfree","pornhub","xnxx","tnaflix"];
       const [searchAllMode, setSearchAllMode] = useState(false);
       const [allResults,    setAllResults]    = useState([]);
       const [searchingAll,  setSearchingAll]  = useState(false);
@@ -1831,7 +1944,7 @@
         setSearchingAll(true); setAllResults([]); setAllErr("");
         setAllSearchIds({}); setAllHasMore({}); setAllLoadingMore({}); setCheckedAll(new Set());
         try{
-          const body = {query:q, xfCategory, phCategory, siteCategory, count};
+          const body = {query:q, xfCategory, phCategory, xnCategory, tfCategory, siteCategory, count};
           const r = await fetch(API+"/search/start_all",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
           const {task_id} = await r.json();
           localStorage.setItem(SEARCH_ALL_TASK_KEY, JSON.stringify({taskId:task_id, query:q}));
@@ -1896,10 +2009,15 @@
               </div>
               <div style={{flex:1}}/>
               {session.download_dir&&(
-                <div className="hdr-extra" style={{fontSize:11,color:"var(--text-2)",display:"flex",alignItems:"center",gap:5,maxWidth:280,overflow:"hidden"}}>
+                <button onClick={()=>setShowDirModal(true)} title="Clique para trocar a pasta de downloads"
+                  className="hdr-extra" style={{fontSize:11,color:"var(--text-2)",display:"flex",alignItems:"center",gap:5,maxWidth:280,overflow:"hidden",background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:"inherit"}}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" strokeWidth="2" strokeLinecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={session.download_dir}>{session.download_dir}</span>
-                </div>
+                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{session.download_dir}</span>
+                </button>
+              )}
+              {showDirModal&&(
+                <DownloadDirModal current={session.download_dir} onClose={()=>setShowDirModal(false)}
+                  onSaved={(newDir)=>{ setSession(s=>({...s,download_dir:newDir})); if(view==="library") loadLibrary(); }}/>
               )}
               <div className="hdr-extra" style={{fontSize:12,color:"var(--text-2)",flexShrink:0}}>via <span style={{color:"var(--text)",fontWeight:500}}>{methodLabel[session.method]||"cookies"}</span></div>
               {view==="search"&&(
@@ -1932,7 +2050,7 @@
 
           <div className="page-container" style={{maxWidth:960,margin:"0 auto",padding:"26px 20px "+((checked.size>0||checkedAll.size>0)?"140px":"64px"),transition:"padding .2s"}}>
           {view==="library" ? (
-            <LibraryGrid items={library} loading={libLoading} err={libErr} onOpen={setPlayerIdx}/>
+            <LibraryGrid items={library} loading={libLoading} err={libErr} disk={libDisk} onOpen={setPlayerIdx}/>
           ) : (<>
             {showHistory&&(
               <div style={{background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:16,padding:16,marginBottom:26,boxShadow:"0 4px 24px rgba(0,0,0,.3)",animation:"fadeIn .2s ease"}}>
@@ -1976,6 +2094,8 @@
                   {id:"xvideos",  label:"XVideos"},
                   {id:"xfree",    label:"xFree"},
                   {id:"pornhub",  label:"Pornhub"},
+                  {id:"xnxx",     label:"XNXX"},
+                  {id:"tnaflix",  label:"TNAFlix"},
                   {id:"all",      label:"🌐 Tudo"},
                 ].map(p=>{
                   const active = p.id==="all" ? searchAllMode : (!searchAllMode && platform===p.id);
@@ -2097,6 +2217,141 @@
                 </div>
               )}
 
+              {/* XNXX: mode tabs (Home / Busca) */}
+              {platform==="xnxx"&&(
+                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"var(--bg-input)",padding:4,borderRadius:10,border:"1px solid var(--border)"}}>
+                  {[{id:"home",label:"🏠 Home"},{id:"search",label:"🔍 Busca"}].map(t=>(
+                    <button key={t.id} onClick={()=>setType(t.id)}
+                      style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",
+                        background:type===t.id?"rgba(29,155,240,.15)":"transparent",
+                        color:type===t.id?"#1d9bf0":"var(--text-2)",fontSize:12,fontWeight:type===t.id?700:400,
+                        cursor:"pointer",transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* XNXX: category filter (Heterossexual / Gay / Sáfica / Trans) — aplica-se a Home e Busca */}
+              {platform==="xnxx"&&(
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Categoria</label>
+                  <select value={xnCategory} onChange={e=>setXnCategory(e.target.value)}
+                    style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                      borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    <option value="straight">❤️ Heterossexual</option>
+                    <option value="gay">🏳️‍🌈 Gay</option>
+                    <option value="sapphic">🏳️‍🌈 Sáfica</option>
+                    <option value="trans">🏳️‍⚧️ Trans</option>
+                  </select>
+                  {xnCategory==="sapphic"&&(
+                    <div style={{marginTop:8,padding:"10px 12px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:8,fontSize:12,color:"var(--text-2)",lineHeight:1.5}}>
+                      ℹ️ O XNXX trata Sáfica como uma tag isolada — não combina com busca por palavra-chave{type==="search"?" (a busca digitada é ignorada)":""} nem com ordenação/duração (ficam desativadas abaixo).
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* XNXX: ordenar por / duração — segmentos combináveis com a categoria e a
+                  busca no próprio site (confirmado testando direto: /search/gay/hits/10min+/<query>
+                  encadeia tudo junto); desativados pra Sáfica, que não combina com nada além
+                  da própria tag. */}
+              {platform==="xnxx"&&(
+                <div style={{display:"flex",gap:10,marginBottom:14}}>
+                  <div style={{flex:1}}>
+                    <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Ordenar por</label>
+                    <select value={xnSort} onChange={e=>setXnSort(e.target.value)} disabled={xnCategory==="sapphic"}
+                      style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                        borderRadius:8,color:"var(--text)",fontSize:13,cursor:xnCategory==="sapphic"?"not-allowed":"pointer",
+                        opacity:xnCategory==="sapphic"?.5:1,appearance:"auto"}}>
+                      <option value="relevance">Relevância</option>
+                      <option value="views">Mais vistos</option>
+                      <option value="month">Este mês</option>
+                      <option value="year">Este ano</option>
+                      <option value="random">Aleatório</option>
+                    </select>
+                  </div>
+                  <div style={{flex:1}}>
+                    <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Duração</label>
+                    <select value={xnDuration} onChange={e=>setXnDuration(e.target.value)} disabled={xnCategory==="sapphic"}
+                      style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                        borderRadius:8,color:"var(--text)",fontSize:13,cursor:xnCategory==="sapphic"?"not-allowed":"pointer",
+                        opacity:xnCategory==="sapphic"?.5:1,appearance:"auto"}}>
+                      <option value="any">Qualquer</option>
+                      <option value="short">Curto (até 10min)</option>
+                      <option value="medium">Médio (10-20min)</option>
+                      <option value="long">Longo (20min+)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {/* TNAFlix: mode tabs (Home / Busca) */}
+              {platform==="tnaflix"&&(
+                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"var(--bg-input)",padding:4,borderRadius:10,border:"1px solid var(--border)"}}>
+                  {[{id:"home",label:"🏠 Home"},{id:"search",label:"🔍 Busca"}].map(t=>(
+                    <button key={t.id} onClick={()=>setType(t.id)}
+                      style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",
+                        background:type===t.id?"rgba(29,155,240,.15)":"transparent",
+                        color:type===t.id?"#1d9bf0":"var(--text-2)",fontSize:12,fontWeight:type===t.id?700:400,
+                        cursor:"pointer",transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* TNAFlix: category filter (Heterossexual / Gay / Sáfica / Trans) — aplica-se a Home e Busca */}
+              {platform==="tnaflix"&&(
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Categoria</label>
+                  <select value={tfCategory} onChange={e=>setTfCategory(e.target.value)}
+                    style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                      borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    <option value="straight">❤️ Heterossexual</option>
+                    <option value="gay">🏳️‍🌈 Gay</option>
+                    <option value="sapphic">🏳️‍🌈 Sáfica</option>
+                    <option value="trans">🏳️‍⚧️ Trans</option>
+                  </select>
+                  {tfCategory!=="straight"&&type==="search"&&(
+                    <div style={{marginTop:8,padding:"10px 12px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:8,fontSize:12,color:"var(--text-2)",lineHeight:1.5}}>
+                      ℹ️ O TNAFlix não tem busca por palavra-chave combinada com categoria — mostrando os vídeos em destaque dessa categoria (a busca digitada é ignorada).
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TNAFlix: ordenar por / duração — só têm efeito na Home/categoria; o
+                  site ignora completamente esses dois filtros na busca por palavra-chave
+                  (confirmado testando direto: ?d=/?u= não mudam nenhum resultado quando
+                  tem query), então só aparecem com a aba Home ativa. */}
+              {platform==="tnaflix"&&type==="home"&&(
+                <div style={{display:"flex",gap:10,marginBottom:14}}>
+                  <div style={{flex:1}}>
+                    <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Ordenar por</label>
+                    <select value={tfSort} onChange={e=>setTfSort(e.target.value)}
+                      style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                        borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                      <option value="featured">Destaque</option>
+                      <option value="newest">Mais recentes</option>
+                      <option value="top">Mais bem avaliados</option>
+                    </select>
+                  </div>
+                  <div style={{flex:1}}>
+                    <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Duração</label>
+                    <select value={tfDuration} onChange={e=>setTfDuration(e.target.value)}
+                      style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                        borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                      <option value="any">Qualquer</option>
+                      <option value="short">Curto (1-3min)</option>
+                      <option value="medium">Médio (3-10min)</option>
+                      <option value="long">Longo (10-30min)</option>
+                      <option value="full">Completo (30min+)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
               {/* xHamster/XVideos: mode tabs (Home / Busca) */}
               {(platform==="xhamster"||platform==="xvideos")&&(
                 <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"var(--bg-input)",padding:4,borderRadius:10,border:"1px solid var(--border)"}}>
@@ -2136,7 +2391,7 @@
                 <div style={{position:"relative",marginBottom:14}}>
                   <div style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"var(--text-2)"}}><SrchI/></div>
                   <input value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&search()}
-                    placeholder={platform==="x"?ph[type]:(platform==="xhamster"?"Buscar no xHamster…":(platform==="xfree"?"Buscar no xFree…":platform==="pornhub"?"Buscar no Pornhub…":"Buscar no XVideos…"))}
+                    placeholder={platform==="x"?ph[type]:(platform==="xhamster"?"Buscar no xHamster…":(platform==="xfree"?"Buscar no xFree…":platform==="pornhub"?"Buscar no Pornhub…":platform==="xnxx"?"Buscar no XNXX…":platform==="tnaflix"?"Buscar no TNAFlix…":"Buscar no XVideos…"))}
                     style={{width:"100%",padding:"12px 14px 12px 42px",background:"var(--bg-input)",border:"1px solid var(--border)",borderRadius:10,color:"var(--text)",fontSize:14,transition:"border-color .15s"}}
                     onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="var(--border)"}/>
                 </div>
@@ -2156,6 +2411,16 @@
               {platform==="pornhub"&&type==="home"&&(
                 <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
                   🏠 Carregará os vídeos em destaque da página principal do <strong style={{color:"var(--text-3)"}}>Pornhub</strong> na categoria selecionada (sem necessidade de login).
+                </div>
+              )}
+              {platform==="xnxx"&&type==="home"&&(
+                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
+                  🏠 Carregará os vídeos em destaque da categoria selecionada no <strong style={{color:"var(--text-3)"}}>XNXX</strong> (sem necessidade de login).
+                </div>
+              )}
+              {platform==="tnaflix"&&type==="home"&&(
+                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
+                  🏠 Carregará os vídeos em destaque da categoria selecionada no <strong style={{color:"var(--text-3)"}}>TNAFlix</strong> (sem necessidade de login).
                 </div>
               )}
               {(platform==="xhamster"||platform==="xvideos")&&type==="home"&&(
@@ -2214,11 +2479,13 @@
                 const disabled  = searching||(needQuery&&!query.trim());
                 const btnLabel  = platform==="x"&&type==="home"        ? "Carregar Para Você"
                                 : platform==="x"&&type==="following"   ? "Carregar Seguindo"
-                                : type==="home"                        ? "Carregar "+({xfree:"xFree",pornhub:"Pornhub",xhamster:"xHamster",xvideos:"XVideos"}[platform]||platform)+" Home"
+                                : type==="home"                        ? "Carregar "+({xfree:"xFree",pornhub:"Pornhub",xnxx:"XNXX",tnaflix:"TNAFlix",xhamster:"xHamster",xvideos:"XVideos"}[platform]||platform)+" Home"
                                 : platform==="xhamster"                ? "Buscar no xHamster"
                                 : platform==="xvideos"                 ? "Buscar no XVideos"
                                 : platform==="xfree"                   ? "Buscar no xFree"
                                 : platform==="pornhub"                 ? "Buscar no Pornhub"
+                                : platform==="xnxx"                    ? "Buscar no XNXX"
+                                : platform==="tnaflix"                 ? "Buscar no TNAFlix"
                                 : "Buscar Vídeos";
                 return (
                   <button onClick={()=>search()} disabled={disabled}

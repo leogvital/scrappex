@@ -29,8 +29,50 @@ app.secret_key = _load_or_create_secret_key()
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 CORS(app, supports_credentials=True)
 
-DOWNLOAD_DIR = str(Path.home() / "Downloads" / "X-Videos")
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+# ── Download folder — configurable at runtime (e.g. a USB drive), persisted
+# to disk so the choice survives a restart, same pattern as .flask_secret_key.
+_DEFAULT_DOWNLOAD_DIR = str(Path.home() / "Downloads" / "X-Videos")
+_DOWNLOAD_DIR_FILE = os.path.join(
+    os.path.abspath(os.path.dirname(os.path.realpath(__file__))), ".download_dir"
+)
+
+
+def _load_download_dir():
+    """Reads the last saved custom folder, falling back to the default if
+    none was ever saved, or if the saved one isn't usable right now (a USB
+    drive unplugged, permissions changed since) — silently, rather than
+    failing to boot over a missing external drive."""
+    if os.path.exists(_DOWNLOAD_DIR_FILE):
+        with open(_DOWNLOAD_DIR_FILE) as f:
+            saved = f.read().strip()
+        if saved and os.path.isdir(saved) and os.access(saved, os.W_OK):
+            return saved
+    os.makedirs(_DEFAULT_DOWNLOAD_DIR, exist_ok=True)
+    return _DEFAULT_DOWNLOAD_DIR
+
+
+def _set_download_dir(path):
+    """Validates and switches the active download folder, persisting the
+    choice so it survives a restart. Doesn't move any already-downloaded
+    files — only affects where new downloads land and what the Library
+    listing/disk-usage bar look at from now on. Returns (ok, error_or_None)."""
+    global DOWNLOAD_DIR
+    path = os.path.abspath(os.path.expanduser(path))
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError as e:
+        return False, f"Não foi possível usar essa pasta: {e}"
+    if not os.path.isdir(path):
+        return False, "O caminho informado não é uma pasta."
+    if not os.access(path, os.W_OK):
+        return False, "Sem permissão de escrita nessa pasta."
+    DOWNLOAD_DIR = path
+    with open(_DOWNLOAD_DIR_FILE, "w") as f:
+        f.write(path)
+    return True, None
+
+
+DOWNLOAD_DIR = _load_download_dir()
 COOKIES_FILE = os.path.join(tempfile.gettempdir(), "x_cookies.txt")  # Netscape format
 download_progress = {}
 
@@ -774,7 +816,7 @@ def _new_site_ss():
     }
 
 
-_SITE_SS = {site: _new_site_ss() for site in ("xhamster", "xvideos", "pornhub")}
+_SITE_SS = {site: _new_site_ss() for site in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix")}
 _SITE_SS_TIMEOUT = 600
 
 # ── xFree session (Selenium — both home and search load/paginate via client-side
@@ -1160,6 +1202,249 @@ def _scrape_pornhub(query, page=1, category="straight"):
     return results, (None if results else "Nenhum resultado encontrado.")
 
 
+# ── XNXX category → URL segment. Unlike Pornhub (dedicated subdomain/path per
+# orientation), XNXX filters everything through /search/<segments>: a single
+# extra path segment before the query acts as a category filter for "gay" and
+# "shemale", combining into /search/gay/<query>. "lesbian" is only a tag, not
+# a recognized orientation filter — combining it with a second query segment
+# gets silently dropped by the site (it falls back to plain-search on the
+# query alone), so — like Pornhub's Trans vertical having no keyword-search
+# endpoint — sapphic here always browses the /search/lesbian tag and ignores
+# whatever was typed. "browse" (no query) works for all four via the bare
+# filter segment: /search/straight, /search/gay, /search/shemale, /search/lesbian.
+_XN_CATEGORY = {
+    "straight": {"filter": None,      "browse": "straight"},
+    "gay":      {"filter": "gay",     "browse": "gay"},
+    "sapphic":  {"filter": None,      "browse": "lesbian"},
+    "trans":    {"filter": "shemale", "browse": "shemale"},
+}
+
+# XNXX also exposes sort and duration as further combinable path segments —
+# confirmed against the live site: /search/gay/hits/10min+/<query> chains
+# orientation + sort + duration + query together in one request, in that
+# order, for both Home (no query) and Search. Sapphic is the one exception:
+# it's a lone tag that drops *any* second segment (sort/duration included,
+# not just a query), so those don't apply there either.
+_XN_SORT = {"relevance": None, "views": "hits", "month": "month", "year": "year", "random": "random"}
+_XN_DURATION = {"any": None, "short": "0-10min", "medium": "10-20min", "long": "20min+"}
+
+
+def _parse_xnxx_views(s):
+    """Convert '12,7M' / '1M' / '46.966' (pt-BR: comma decimal, dot thousands) → int."""
+    s = (s or "").strip().upper()
+    try:
+        if s.endswith("M"):
+            return int(float(s[:-1].replace(",", ".")) * 1_000_000)
+        if s.endswith("K"):
+            return int(float(s[:-1].replace(",", ".")) * 1_000)
+        return int(s.replace(".", "").replace(",", ""))
+    except Exception:
+        return 0
+
+
+def _scrape_xnxx(query, page=1, category="straight", sort="relevance", duration="any"):
+    """
+    Scrape one page of www.xnxx.com results (~25-36 videos per page, 1-based).
+    category: straight | gay | sapphic | trans. sort: relevance | views | month
+    | year | random. duration: any | short | medium | long.
+    Sapphic has no keyword-search endpoint (see _XN_CATEGORY above) and drops
+    any second segment at all — `query`, `sort`, and `duration` are all
+    ignored for it, and this always browses the bare lesbian tag instead of
+    erroring or silently returning unfiltered results under that label.
+    Returns (results_list, error_or_None).
+    """
+    import re, requests, urllib.parse
+    from html import unescape
+
+    cat = _XN_CATEGORY.get(category, _XN_CATEGORY["straight"])
+    is_sapphic = category == "sapphic"
+    q = "" if is_sapphic else query
+
+    if is_sapphic:
+        segments = [cat["browse"]]
+    else:
+        segments = []
+        if cat["filter"]:
+            segments.append(cat["filter"])   # gay/shemale — also doubles as the browse marker alone
+        elif not q:
+            segments.append(cat["browse"])   # straight browse marker; omitted once a query segment follows
+        sort_seg = _XN_SORT.get(sort)
+        if sort_seg:
+            segments.append(sort_seg)
+        dur_seg = _XN_DURATION.get(duration)
+        if dur_seg:
+            segments.append(dur_seg)
+        if q:
+            segments.append(q)
+    if page > 1:
+        segments.append(str(page))
+    path = "/search/" + "/".join(urllib.parse.quote(s, safe="") for s in segments)
+    url = f"https://www.xnxx.com{path}"
+
+    try:
+        r = requests.get(url, headers=_SITE_HEADERS, timeout=20)
+        r.raise_for_status()
+    except Exception as ex:
+        return [], f"Erro ao acessar XNXX: {ex}"
+
+    html = r.text
+    # "  with-uploader" (not the bare "thumb-block") excludes decorative/
+    # suggestion placeholder cards that carry no video data.
+    positions = [m.start() for m in re.finditer(r'class="thumb-block  with-uploader', html)]
+    results = []
+    for i, start in enumerate(positions):
+        end   = positions[i + 1] if i + 1 < len(positions) else len(html)
+        block = html[start:end]
+
+        id_m         = re.search(r'data-videoid="(\d+)"', block)
+        href_title_m = re.search(r'href="(/video-[^"]+)" title="([^"]+)"', block)
+        if not id_m or not href_title_m:
+            continue
+
+        thumb_m = re.search(r'data-src="([^"]+)"', block)
+        user_m  = re.search(r'class="name">([^<]+)</span>', block)
+        meta_m  = re.search(r'class="metadata">([\s\S]*?)</p>', block)
+        dur_sec, views = 0, 0
+        if meta_m:
+            meta = meta_m.group(1)
+            dur_m = re.search(r'(?:(\d+)h)?\s*(\d+)min', meta)
+            if dur_m:
+                h = int(dur_m.group(1)) if dur_m.group(1) else 0
+                m = int(dur_m.group(2)) if dur_m.group(2) else 0
+                dur_sec = h * 3600 + m * 60
+            views_m = re.search(r'([\d.,]+[MK]?)\s*<span class="icon-f icf-eye"', meta)
+            if views_m:
+                views = _parse_xnxx_views(views_m.group(1))
+
+        results.append({
+            "id":          id_m.group(1),
+            "url":         f"https://www.xnxx.com{href_title_m.group(1)}",
+            "title":       unescape(href_title_m.group(2)),
+            "uploader":    unescape(user_m.group(1)) if user_m else "",
+            "uploader_id": "",
+            "duration":    dur_sec,
+            "thumbnail":   thumb_m.group(1) if thumb_m else "",
+            "view_count":  views,
+            "like_count":  0,
+        })
+
+    return results, (None if results else "Nenhum resultado encontrado.")
+
+
+# ── TNAFlix category → URL. Unlike XNXX (a filter segment combinable with a
+# query) or Pornhub (a dedicated vertical with its own search endpoint),
+# TNAFlix's keyword search has *no* category filter at all — confirmed
+# against the live site: `/<tag>/search?what=...` 404s, and the search box
+# rendered on every category page still posts to the same site-wide
+# `/search`. So here, ANY non-straight category always browses its tag page
+# and ignores whatever was typed — not just one edge case like Pornhub's
+# Trans or XNXX's Sapphic.
+_TF_CATEGORY = {
+    "straight": None,
+    "gay":      "gay-porn",
+    "sapphic":  "lesbian-porn",
+    "trans":    "shemale-porn",
+}
+
+# TNAFlix's sort dropdown is only rendered on Home/category pages, and its
+# URL slug differs between the plain homepage and a category tag page for two
+# of the three options (confirmed against the site: "Most Recent" is
+# tnaflix.com/new on the homepage but tnaflix.com/<tag>/most-recent on a tag
+# page) — hence two separate maps. It does NOT exist on keyword search at
+# all, so `sort` is simply unused whenever `_scrape_tnaflix` takes the
+# `/search?what=...` branch below.
+_TF_SORT_HOME = {"featured": "featured", "newest": "new", "top": "toprated"}
+_TF_SORT_TAG  = {"featured": "featured", "newest": "most-recent", "top": "top-rated"}
+
+# The Duration dropdown (`?d=`) does render on the search page too, but has
+# zero effect there — confirmed against the site: identical result IDs with
+# and without `&d=short` on the same `what=` query. It only actually filters
+# Home/category browsing, so — like `sort` above — it's ignored whenever a
+# straight keyword search is being performed.
+_TF_DURATION = {"any": None, "short": "short", "medium": "medium", "long": "long", "full": "full"}
+
+
+def _scrape_tnaflix(query, page=1, category="straight", sort="featured", duration="any"):
+    """
+    Scrape one page of www.tnaflix.com results (~60 videos per page, 1-based).
+    category: straight | gay | sapphic | trans. sort: featured | newest | top
+    (Home/category browsing only — no effect on keyword search, see
+    _TF_SORT_HOME/_TF_SORT_TAG above). duration: any | short | medium | long |
+    full (also Home/category only, see _TF_DURATION above).
+    Only straight keyword search paginates — the homepage and every category
+    tag page return byte-for-byte the same cards regardless of `?page=N`
+    (confirmed against the site), so Home browsing for any category is always
+    a single page; `search_site_page`'s caller is responsible for turning
+    `has_more` off in that case (mirrors XVideos' category-landing quirk).
+    Returns (results_list, error_or_None).
+    """
+    import re, requests
+    from html import unescape
+
+    tag = _TF_CATEGORY.get(category)
+
+    if query and category == "straight":
+        url, params = "https://www.tnaflix.com/search", {"what": query, "page": page}
+    else:
+        slug = (_TF_SORT_TAG if tag else _TF_SORT_HOME).get(sort, "featured")
+        url = f"https://www.tnaflix.com/{tag}/{slug}" if tag else f"https://www.tnaflix.com/{slug}"
+        params = {}
+        dur_val = _TF_DURATION.get(duration)
+        if dur_val:
+            params["d"] = dur_val
+
+    try:
+        r = requests.get(url, params=params, headers=_SITE_HEADERS, timeout=20)
+        r.raise_for_status()
+    except Exception as ex:
+        return [], f"Erro ao acessar TNAFlix: {ex}"
+
+    html = r.text
+    positions = [m.start() for m in re.finditer(r'<div data-vid="\d+"', html)]
+    results = []
+    for i, start in enumerate(positions):
+        end   = positions[i + 1] if i + 1 < len(positions) else len(html)
+        block = html[start:end]
+
+        id_m    = re.search(r'data-vid="(\d+)"', block)
+        title_m = re.search(r'class="video-title text-break">\s*([\s\S]*?)\s*</a>', block)
+        if not id_m or not title_m:
+            continue
+
+        href_m  = re.search(r'class="thumb thumb-chrome video-thumb[^"]*" href="([^"]+)"', block)
+        thumb_m = re.search(r'data-src="([^"]+)"', block) or re.search(r'<img[^>]+src="([^"]+)"', block)
+        dur_m   = re.search(r'class="thumb-icon video-duration">([^<]+)<', block)
+        user_m  = re.search(r'class="[^"]*badge-video-info[^"]*">\s*([\s\S]*?)\s*</a>', block)
+        views_m = re.search(r'icon-eye"></i>([\d.,]+[MK]?)', block)
+
+        dur_sec = 0
+        if dur_m:
+            try:
+                parts = [int(p) for p in dur_m.group(1).strip().split(":")]
+                if len(parts) == 3:
+                    dur_sec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+                elif len(parts) == 2:
+                    dur_sec = parts[0] * 60 + parts[1]
+            except ValueError:
+                pass
+
+        results.append({
+            "id":          id_m.group(1),
+            "url":         href_m.group(1) if href_m else f"https://www.tnaflix.com/video{id_m.group(1)}",
+            "title":       unescape(title_m.group(1)),
+            "uploader":    unescape(user_m.group(1)) if user_m else "",
+            "uploader_id": "",
+            "duration":    dur_sec,
+            "thumbnail":   thumb_m.group(1) if thumb_m else "",
+            # Same English dot-decimal K/M formatting as Pornhub ("33.2K") —
+            # reuses that parser instead of duplicating an identical one.
+            "view_count":  _parse_pornhub_views(views_m.group(1)) if views_m else 0,
+            "like_count":  0,
+        })
+
+    return results, (None if results else "Nenhum resultado encontrado.")
+
+
 def _parse_xfree_views(s):
     """Convert '1.1M' / '66.8K' / '830' → int."""
     s = (s or "").strip().upper().replace(" ", "").replace(",", "")
@@ -1243,10 +1528,22 @@ def search_site_page(site, query, page, sort="relevance", duration="any", catego
         results, err = _scrape_xvideos(query, page=page, sort=sort, category=category)
     elif site == "pornhub":
         results, err = _scrape_pornhub(query, page=page, category=category)
+    elif site == "xnxx":
+        results, err = _scrape_xnxx(query, page=page, category=category, sort=sort, duration=duration)
+    elif site == "tnaflix":
+        results, err = _scrape_tnaflix(query, page=page, category=category, sort=sort, duration=duration)
     else:
         return [], 0, f"Plataforma não suportada: {site}"
 
     raw_count = len(results)
+
+    # XNXX/TNAFlix already filter duration server-side, using their own band
+    # definitions — XNXX's "medium" is 10-20min and TNAFlix's is 3-10min, not
+    # this generic filter's 10-30min. Running the generic filter below on top
+    # would double-filter with mismatched thresholds and silently drop
+    # results the site already correctly returned.
+    if site in ("xnxx", "tnaflix"):
+        return results, raw_count, err
 
     # Duration filter (client-side — both scrapers return duration in seconds)
     if results and duration and duration != "any":
@@ -1996,6 +2293,23 @@ def session_info():
     has_cookies = os.path.exists(COOKIES_FILE)
     return jsonify({**session_state, "has_cookies": has_cookies, "download_dir": DOWNLOAD_DIR})
 
+
+@app.route("/api/settings/download-dir")
+def get_download_dir():
+    return jsonify({"download_dir": DOWNLOAD_DIR, "default_download_dir": _DEFAULT_DOWNLOAD_DIR})
+
+
+@app.route("/api/settings/download-dir", methods=["POST"])
+def set_download_dir():
+    d = request.json or {}
+    path = (d.get("path") or "").strip()
+    if not path:
+        return jsonify({"success": False, "error": "Informe um caminho."}), 400
+    ok, err = _set_download_dir(path)
+    if not ok:
+        return jsonify({"success": False, "error": err})
+    return jsonify({"success": True, "download_dir": DOWNLOAD_DIR})
+
 # ── Search history / favorites ─────────────────────────────────────────────
 # Server-side (SQLite), replacing the old localStorage-only version — see
 # _add_search_history/_list_search_history above. Every endpoint returns the
@@ -2239,8 +2553,8 @@ def search():
             _self_heal_restart(f"xfree esgotou {_BROWSER_RETRY_ATTEMPTS} tentativas: {last_err}")
         return jsonify({"error": f"Erro no navegador: {last_err}", "results": [], "has_more": False}), 500
 
-    # ── External sites (XHamster, XVideos, Pornhub) ───────────────────────────
-    if platform in ("xhamster", "xvideos", "pornhub"):
+    # ── External sites (XHamster, XVideos, Pornhub, XNXX, TNAFlix) ────────────
+    if platform in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix"):
         # query="" is valid now — it means "Home" (browse the category's landing feed)
         sort     = d.get("sort", "relevance")
         duration = d.get("duration", "any")
@@ -2272,6 +2586,14 @@ def search():
         # page — there's no more to fetch, so don't offer a "load more" that would
         # just loop forever getting 0 new (deduped) results.
         if platform == "xvideos" and not q:
+            has_more = False
+            ss["finished"] = True
+        # TNAFlix: same non-paginating-landing-page quirk as XVideos above, but
+        # broader — it applies to Home (any category) AND to a keyword search
+        # under any non-straight category, since _scrape_tnaflix silently falls
+        # back to browsing that category's (non-paginating) tag page whenever
+        # it can't combine the category with the typed query.
+        if platform == "tnaflix" and (not q or category != "straight"):
             has_more = False
             ss["finished"] = True
         # Dedup — some sites (e.g. Pornhub category browsing) repeat a handful of
@@ -2368,7 +2690,7 @@ def search():
 # still works exactly as before for anything that wants a synchronous call.
 _search_tasks = {}
 _SEARCH_TASK_MAX_AGE = 3600  # seconds — stale finished tasks get swept by the watchdog
-_ALL_SEARCH_PLATFORMS = ["x", "xhamster", "xvideos", "xfree", "pornhub"]
+_ALL_SEARCH_PLATFORMS = ["x", "xhamster", "xvideos", "xfree", "pornhub", "xnxx", "tnaflix"]
 
 
 def _call_search_view(body):
@@ -2412,6 +2734,10 @@ def _body_for_all_platform(platform, d):
         return {"query": q, "platform": "xfree", "type": "search", "category": d.get("xfCategory", "straight"), "count": count}
     if platform == "pornhub":
         return {"query": q, "platform": "pornhub", "type": "search", "category": d.get("phCategory", "straight"), "count": count}
+    if platform == "xnxx":
+        return {"query": q, "platform": "xnxx", "type": "search", "category": d.get("xnCategory", "straight"), "count": count}
+    if platform == "tnaflix":
+        return {"query": q, "platform": "tnaflix", "type": "search", "category": d.get("tfCategory", "straight"), "count": count}
     return {"query": q, "platform": platform, "type": "search", "sort": "relevance", "duration": "any",
             "category": d.get("siteCategory", "straight"), "count": count}
 
@@ -2751,7 +3077,17 @@ def library_list():
             "mtime": st.st_mtime,
         })
     items.sort(key=lambda x: x["mtime"], reverse=True)
-    return jsonify({"items": items})
+    # Free space on the filesystem that actually holds the downloads — not the
+    # server's root filesystem, in case DOWNLOAD_DIR is a separate mount
+    # (an external drive, a bind-mounted volume, etc.).
+    du = shutil.disk_usage(DOWNLOAD_DIR)
+    disk = {
+        "total_gb": round(du.total / 1_073_741_824, 2),
+        "used_gb":  round(du.used / 1_073_741_824, 2),
+        "free_gb":  round(du.free / 1_073_741_824, 2),
+        "free_pct": round(du.free / du.total * 100, 1) if du.total else 0,
+    }
+    return jsonify({"items": items, "disk": disk})
 
 
 @app.route("/api/library/video/<path:name>")
