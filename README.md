@@ -93,6 +93,8 @@ bash restart.sh
 - Google Chrome installed (for Selenium-based scraping of X and xFree)
 - `python3-venv` (included in step 1 above)
 
+**If running under systemd** (a unit like `/etc/systemd/system/scrapperx.service` with `ExecStart=.../start.sh` and `Restart=always`): don't run `restart.sh` by hand once that unit exists and is enabled. `restart.sh` only knows about whatever's bound to port 5000 at the moment it runs — it has no idea a systemd unit is also trying to manage that same process, so the two fight over the port (systemd's `Restart=always` respawning `start.sh` the instant `restart.sh` kills the old one, `restart.sh`'s own fresh gunicorn then failing to bind because the systemd-spawned one got there first, `curl`'s health check in `restart.sh` still passing against *that* one and reporting success even though nothing changed). Restart with `sudo systemctl restart scrapperx.service` instead — `restart.sh`/`start.sh` remain what that unit's `ExecStart` actually runs under the hood, so they're still the right thing to read to understand *how* the server starts, just not the right *command* to run directly once systemd owns the process.
+
 ---
 
 ### 🪟 Windows — step by step
@@ -332,6 +334,8 @@ Validated at three levels: a Python test using Flask's test client confirming a 
 | POST | `/api/download/pause/<tid>` | Pause a running download |
 | POST | `/api/download/cancel/<tid>` | Cancel a running or paused download |
 | GET | `/api/download/file/<tid>` | Serve the downloaded file |
+| GET | `/api/settings/download-dir` | Current download folder, plus the default one |
+| POST | `/api/settings/download-dir` | Change the download folder (validates it exists/is writable) |
 | GET | `/api/library` | List videos in the downloads folder, plus free disk space |
 | GET | `/api/library/video/<name>` | Serve a library video (streaming) |
 | POST | `/api/library/delete` | Delete a video from the library |
@@ -353,7 +357,11 @@ The entire interface lives in `index.html` as inline JSX compiled by Babel in th
 | `BulkProgressModal` | Modal with simultaneous progress for several downloads |
 | `BgTray` | Floating pill for background downloads |
 | `PostModal` | Modal for composing and publishing a tweet with video (chunked upload with real progress) |
-| `LibraryGrid` | Grid of downloaded videos |
+| `LibraryGrid` | Grid of downloaded videos, with the disk-usage bar |
+| `LibraryModal` | "Meus Vídeos" as a modal over the search page (wraps `LibraryGrid`) |
+| `DiskUsageBar` | Free/used space bar for the folder backing `DOWNLOAD_DIR` |
+| `HistoryModal` | Search history/favorites as a modal — filter by platform/searched term, paginated |
+| `DownloadDirModal` | Modal to change the download folder (free-text path, no native picker) |
 | `PlayerModal` | Fullscreen player with seek, play/pause, next/previous, delete |
 
 ### Search history and favorites

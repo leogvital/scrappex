@@ -4,7 +4,7 @@
 
 Aplicação web local para buscar e baixar vídeos do **X (Twitter)**, **XHamster**, **XVideos**, **xFree**, **Pornhub**, **XNXX** e **TNAFlix**.
 
-> Veja o [ROADMAP.md](ROADMAP.md) para o que já foi feito e os próximos passos planejados.
+> Veja o [ROADMAP.pt-BR.md](ROADMAP.pt-BR.md) para o que já foi feito e os próximos passos planejados.
 
 ## Visão Geral da Arquitetura
 
@@ -92,6 +92,8 @@ bash restart.sh
 - Python 3.10+
 - Google Chrome instalado (para scraping do X e xFree via Selenium)
 - `python3-venv` (incluso no passo 1 acima)
+
+**Se estiver rodando sob systemd** (uma unit tipo `/etc/systemd/system/scrapperx.service` com `ExecStart=.../start.sh` e `Restart=always`): não rode o `restart.sh` manualmente com essa unit existindo e habilitada. O `restart.sh` só sabe sobre o que estiver ocupando a porta 5000 no momento em que roda — ele não tem como saber que uma unit do systemd também está tentando gerenciar esse mesmo processo, então os dois brigam pela porta (o `Restart=always` do systemd ressuscita o `start.sh` na hora que o `restart.sh` mata o antigo, o gunicorn novo do próprio `restart.sh` então falha ao ligar porque o do systemd chegou primeiro na porta, e o `curl` de verificação de saúde do `restart.sh` continua passando contra *esse* processo e reportando sucesso mesmo sem nada ter mudado de verdade). Reinicie com `sudo systemctl restart scrapperx.service` em vez disso — `restart.sh`/`start.sh` continuam sendo o que essa unit realmente roda por baixo dos panos no `ExecStart`, então ainda são o lugar certo pra entender *como* o servidor sobe, só não o comando certo pra rodar direto quando o systemd é dono do processo.
 
 ---
 
@@ -332,6 +334,8 @@ Validado em três níveis: um teste Python usando o test client do Flask confirm
 | POST | `/api/download/pause/<tid>` | Pausar um download em andamento |
 | POST | `/api/download/cancel/<tid>` | Cancelar um download em andamento ou pausado |
 | GET | `/api/download/file/<tid>` | Servir arquivo baixado |
+| GET | `/api/settings/download-dir` | Pasta de download atual, mais a padrão |
+| POST | `/api/settings/download-dir` | Trocar a pasta de download (valida se existe/tem permissão de escrita) |
 | GET | `/api/library` | Listar vídeos na pasta de downloads, mais espaço livre em disco |
 | GET | `/api/library/video/<name>` | Servir vídeo da biblioteca (streaming) |
 | POST | `/api/library/delete` | Excluir vídeo da biblioteca |
@@ -353,7 +357,11 @@ Toda a interface está em `index.html` como JSX inline compilado pelo Babel no n
 | `BulkProgressModal` | Modal com progresso simultâneo de vários downloads |
 | `BgTray` | Pill flutuante de downloads em background |
 | `PostModal` | Modal para compor e publicar tweet com vídeo (upload chunked com progresso real) |
-| `LibraryGrid` | Grid de vídeos baixados |
+| `LibraryGrid` | Grid de vídeos baixados, com a barra de uso de disco |
+| `LibraryModal` | "Meus Vídeos" como modal sobre a página de busca (envolve o `LibraryGrid`) |
+| `DiskUsageBar` | Barra de espaço livre/usado da pasta que serve de `DOWNLOAD_DIR` |
+| `HistoryModal` | Histórico e favoritos de busca como modal — filtro por site/termo pesquisado, paginado |
+| `DownloadDirModal` | Modal pra trocar a pasta de download (caminho em texto livre, sem seletor nativo) |
 | `PlayerModal` | Player fullscreen com seek, play/pause, próximo/anterior, exclusão |
 
 ### Histórico e favoritos de busca
@@ -427,7 +435,7 @@ Validado com um teste em nível Python que simula o `yt_dlp.YoutubeDL` pra acion
 
 ### Histórico de downloads duplicados (sobrevive a apagar o arquivo)
 
-`download_history.db` (SQLite, ao lado do `app.py` — propositalmente *não* embaixo de `tempfile.gettempdir()`, já que o objetivo inteiro é lembrar que um vídeo já foi baixado muito depois do arquivo em si ter sido apagado, o que descarta qualquer lugar que se apague num reboot ou numa limpeza de `/tmp` do sistema operacional; veja a correção do vazamento de disco no `ROADMAP.md` pra entender por que isso não é hipotético aqui) registra toda download concluído por URL, junto com título, nome do arquivo e tamanho. É um histórico *append-only* (não uma linha por URL), então baixar a mesma URL de novo depois — inclusive uma segunda vez depois de apagar a primeira cópia — continua totalmente registrado em vez de sobrescrever silenciosamente a entrada anterior.
+`download_history.db` (SQLite, ao lado do `app.py` — propositalmente *não* embaixo de `tempfile.gettempdir()`, já que o objetivo inteiro é lembrar que um vídeo já foi baixado muito depois do arquivo em si ter sido apagado, o que descarta qualquer lugar que se apague num reboot ou numa limpeza de `/tmp` do sistema operacional; veja a correção do vazamento de disco no `ROADMAP.pt-BR.md` pra entender por que isso não é hipotético aqui) registra toda download concluído por URL, junto com título, nome do arquivo e tamanho. É um histórico *append-only* (não uma linha por URL), então baixar a mesma URL de novo depois — inclusive uma segunda vez depois de apagar a primeira cópia — continua totalmente registrado em vez de sobrescrever silenciosamente a entrada anterior.
 
 `/api/download/start` checa esse histórico por URL antes de fazer qualquer coisa; se tiver uma correspondência, devolve `{"already_downloaded": true, "info": {...}}` em vez de começar um download novo, a menos que a requisição inclua explicitamente `"force": true`. Nada fica bloqueado pra sempre automaticamente — o `FormatModal` mostra o título/tamanho/data registrados e um botão "Baixar mesmo assim" que repete a mesma chamada com `force:true`; o `BulkProgressModal` faz o mesmo por item (identificado pelo índice no array em vez do `taskId`, já que um item "já baixado" que nunca chegou a começar não tem task nenhuma ainda — vários poderiam colidir numa chave `null` do contrário). Resultados de busca também são marcados: `_mark_downloaded(results)` roda uma única query em lote `WHERE url IN (...)` (não uma consulta por resultado) em todo ponto em que `/api/search`/`/api/search/more` devolve resultados, adicionando `already_downloaded: bool` a cada item — o `VideoCard` mostra uma badge pequena "✓ Já baixado" quando setado. Como `/api/search/start_all` reaproveita a mesma view `search()` por dentro (veja [Busca em Background](#busca-em-background)), os resultados agregados ganham a mesma marcação automaticamente, sem código extra.
 
