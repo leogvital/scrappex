@@ -358,6 +358,7 @@ Toda a interface está em `index.html` como JSX inline compilado pelo Babel no n
 | `BgTray` | Pill flutuante de downloads em background |
 | `PostModal` | Modal para compor e publicar tweet com vídeo (upload chunked com progresso real) |
 | `LibraryGrid` | Grid de vídeos baixados, com a barra de uso de disco |
+| `LibraryCard` | Um item da grade da biblioteca — preview ao passar o mouse via streaming local |
 | `LibraryModal` | "Meus Vídeos" como modal sobre a página de busca (envolve o `LibraryGrid`) |
 | `DiskUsageBar` | Barra de espaço livre/usado da pasta que serve de `DOWNLOAD_DIR` |
 | `HistoryModal` | Histórico e favoritos de busca como modal — filtro por site/termo pesquisado, paginado |

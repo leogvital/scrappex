@@ -358,6 +358,7 @@ The entire interface lives in `index.html` as inline JSX compiled by Babel in th
 | `BgTray` | Floating pill for background downloads |
 | `PostModal` | Modal for composing and publishing a tweet with video (chunked upload with real progress) |
 | `LibraryGrid` | Grid of downloaded videos, with the disk-usage bar |
+| `LibraryCard` | One library grid item — hover-to-play preview via local streaming |
 | `LibraryModal` | "Meus Vídeos" as a modal over the search page (wraps `LibraryGrid`) |
 | `DiskUsageBar` | Free/used space bar for the folder backing `DOWNLOAD_DIR` |
 | `HistoryModal` | Search history/favorites as a modal — filter by platform/searched term, paginated |
