@@ -206,6 +206,8 @@ Selenium keeps **one persistent Chrome session** across pagination — the drive
 
 **Infinite auto-scroll:** upon reaching 700 px from the bottom of the page, new results load automatically (no button click), mimicking X's native navigation.
 
+**Clickable username/hashtags on each card**: `_parse_tweet_object` now also pulls `hashtags` from the tweet's own `entities.hashtags` (a structured list X already attaches to the tweet, not a regex over the text — avoids false positives from a `#` inside a URL/mention) alongside the existing `uploader_id`/`duration`/etc. fields. `VideoCard` uses `hashtags !== undefined` (present, possibly empty) as the signal "this is an X result" — platform isn't otherwise threaded down to that component, and that check works the same whether the card came from a single-platform X search or a "buscar em tudo" aggregate result. When it's an X card, `@uploader_id` becomes a link to `x.com/<user>/media` and each `#hashtag` becomes a link to `x.com/hashtag/<tag>?...&f=video` — the exact same URLs the app's own in-app User/Hashtag search types already navigate to (see the table above), each opening in a new tab (`target="_blank"`, with `e.stopPropagation()` so clicking one doesn't also trigger the card's own play-preview handler). Other platforms' cards are unaffected — no `hashtags` field, so the username stays plain, non-clickable text exactly as before.
+
 ### XHamster and XVideos — via HTTP
 Direct HTML page scraping, no headless browser. Two tabs — Home and Search — plus an orientation category (❤️ Straight / 🏳️‍🌈 Gay / 🏳️‍⚧️ Trans), using the same simple URL-prefix scheme on both sites:
 

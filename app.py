@@ -687,6 +687,13 @@ def _parse_tweet_object(tweet_raw, users_map=None):
             duration = m.get("video_info", {}).get("duration_millis", 0) / 1000
             break
 
+    # Structured entity, not a regex over `text` — avoids false positives from
+    # URLs/mentions that happen to contain a "#", and matches what X itself
+    # considers a hashtag for that tweet. Present (possibly empty) only for X
+    # results — the frontend uses that to gate the clickable username/hashtag
+    # UI, which doesn't make sense for the other platforms.
+    hashtags = [h["text"] for h in tweet_raw.get("entities", {}).get("hashtags", []) if h.get("text")]
+
     return {
         "id": tweet_id,
         "url": f"https://x.com/{screen_name}/status/{tweet_id}",
@@ -697,6 +704,7 @@ def _parse_tweet_object(tweet_raw, users_map=None):
         "thumbnail": thumbnail,
         "view_count": tweet_raw.get("view_count", 0),
         "like_count": tweet_raw.get("favorite_count", 0),
+        "hashtags": hashtags,
     }
 
 

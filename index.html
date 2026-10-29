@@ -463,9 +463,32 @@
                            display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
                 {video.title||"X Video"}
               </div>
-              <div style={{fontSize:11,color:"var(--text-2)",marginTop:3,display:"flex",gap:6,flexWrap:"wrap"}}>
-                <span>@{video.uploader_id||video.uploader||"?"}</span>
+              <div style={{fontSize:11,color:"var(--text-2)",marginTop:3,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                {/* `hashtags` is only ever present on X results (see _parse_tweet_object
+                    in app.py) — used here instead of checking platform state, since that
+                    isn't threaded down to VideoCard and wouldn't tell "aggregate result
+                    from X" apart from any other platform anyway. */}
+                {video.hashtags!==undefined ? (
+                  <a href={`https://x.com/${video.uploader_id}/media`} target="_blank" rel="noreferrer"
+                    onClick={e=>e.stopPropagation()} title={`Ver vídeos de @${video.uploader_id} no X`}
+                    style={{color:"var(--text-2)",textDecoration:"none"}}
+                    onMouseEnter={e=>e.currentTarget.style.textDecoration="underline"}
+                    onMouseLeave={e=>e.currentTarget.style.textDecoration="none"}>
+                    @{video.uploader_id||video.uploader||"?"}
+                  </a>
+                ) : (
+                  <span>@{video.uploader_id||video.uploader||"?"}</span>
+                )}
                 {video.view_count>0&&<span>· {fmtV(video.view_count)} views</span>}
+                {video.hashtags?.map(tag=>(
+                  <a key={tag} href={`https://x.com/hashtag/${encodeURIComponent(tag)}?src=hashtag_click&f=video`} target="_blank" rel="noreferrer"
+                    onClick={e=>e.stopPropagation()} title={`Buscar #${tag} no X`}
+                    style={{color:"#1d9bf0",textDecoration:"none"}}
+                    onMouseEnter={e=>e.currentTarget.style.textDecoration="underline"}
+                    onMouseLeave={e=>e.currentTarget.style.textDecoration="none"}>
+                    #{tag}
+                  </a>
+                ))}
               </div>
             </div>
 
