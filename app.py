@@ -1476,6 +1476,44 @@ _RT_SORT = {"relevance": None, "newest": "new", "top": "top", "views": "mostview
 _RT_DURATION = {"any": None, "short": (0, 10), "medium": (10, 20), "long": (20, None)}
 
 
+def _rt_thumb_url(raw):
+    """Some RedTube videos only have a dynamic thumbnail (generated on the fly
+    from a video frame, served from pix-cdn77.rdtcdn.com) instead of the older
+    static ei-ph.rdtcdn.com jpg. Confirmed against the site: the exact same
+    pix-cdn77 URL returns 200 with a Referer: https://www.redtube.com/ header
+    and 403 without one — the browser's own <img> request, loading from our
+    page, never sends that header, so those thumbnails came back broken for
+    the user ("vários vídeos não aparecem imagem de preview"). Routed through
+    our own proxy (which adds the header server-side) only for that host;
+    ei-ph.rdtcdn.com thumbnails already load fine with no special handling and
+    are left as plain URLs to avoid the extra hop."""
+    if raw and "pix-cdn77.rdtcdn.com" in raw:
+        import urllib.parse
+        return "/api/thumb-proxy?url=" + urllib.parse.quote(raw, safe="")
+    return raw
+
+
+@app.route("/api/thumb-proxy")
+def thumb_proxy():
+    import requests
+    from urllib.parse import urlparse
+    from flask import Response as _ThumbResponse
+
+    url = request.args.get("url", "")
+    host = urlparse(url).hostname or ""
+    # Allowlist by suffix, not prefix/substring — prevents someone passing an
+    # arbitrary URL (SSRF) through this endpoint by crafting a hostname that
+    # merely contains "rdtcdn.com" somewhere.
+    if not url.startswith("https://") or not host.endswith(".rdtcdn.com"):
+        return jsonify({"error": "Host não permitido"}), 400
+    try:
+        r = requests.get(url, headers={**_SITE_HEADERS, "Referer": "https://www.redtube.com/"}, timeout=15)
+        r.raise_for_status()
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 502
+    return _ThumbResponse(r.content, mimetype=r.headers.get("Content-Type", "image/jpeg"))
+
+
 def _scrape_redtube(query, page=1, category="straight", sort="relevance", duration="any"):
     """
     Scrape one page of www.redtube.com results (~30-65 videos per page, 1-based).
@@ -1566,7 +1604,7 @@ def _scrape_redtube(query, page=1, category="straight", sort="relevance", durati
             "uploader":    unescape(user_m.group(1)).strip() if user_m else "",
             "uploader_id": "",
             "duration":    dur_sec,
-            "thumbnail":   thumb_m.group(1) if thumb_m else "",
+            "thumbnail":   _rt_thumb_url(unescape(thumb_m.group(1))) if thumb_m else "",
             # Same English dot-decimal K/M formatting as Pornhub ("123K") —
             # reuses that parser instead of duplicating an identical one.
             "view_count":  _parse_pornhub_views(views_m.group(1)) if views_m else 0,
