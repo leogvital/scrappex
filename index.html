@@ -97,7 +97,7 @@
 
     // Shared platform label map — used by VideoCard's badge in "buscar em
     // tudo" results and by the search-history labels inside App.
-    const PLATFORM_LABEL = {x:"𝕏",xhamster:"xHamster",xvideos:"XVideos",xfree:"xFree",pornhub:"Pornhub",xnxx:"XNXX",tnaflix:"TNAFlix",all:"🌐 Tudo"};
+    const PLATFORM_LABEL = {x:"𝕏",xhamster:"xHamster",xvideos:"XVideos",xfree:"xFree",pornhub:"Pornhub",xnxx:"XNXX",tnaflix:"TNAFlix",redtube:"RedTube",all:"🌐 Tudo"};
 
     const Spin = ({size=20,color="#1d9bf0"}) => (
       <div style={{width:size,height:size,border:"2px solid rgba(255,255,255,0.12)",borderTopColor:color,borderRadius:"50%",animation:"spin .7s linear infinite",flexShrink:0}}/>
@@ -1652,6 +1652,14 @@
       // these are only read/shown while the Home tab is active.
       const [tfSort,      setTfSort]      = useState("featured");  // featured | newest | top
       const [tfDuration,  setTfDuration]  = useState("any");       // any | short | medium | long | full
+      const [rtCategory,  setRtCategory]  = useState("straight"); // RedTube: straight | gay | sapphic | trans
+      // RedTube's sort/duration only reliably combine with Straight (confirmed
+      // against the site: Gay silently falls back to default for most sort
+      // values and duration barely narrows it; Trans/Sapphic don't combine
+      // with anything beyond the bare category) — so both selects are shown
+      // only when rtCategory === "straight".
+      const [rtSort,      setRtSort]      = useState("relevance"); // relevance | newest | top | views | longest
+      const [rtDuration,  setRtDuration]  = useState("any");       // any | short | medium | long
       const [checked,     setChecked]     = useState(new Set()); // multi-select IDs
       const [bulkFmt,     setBulkFmt]     = useState("best");
       const [bulkTasks,   setBulkTasks]   = useState(null);    // null | task array
@@ -1756,6 +1764,7 @@
         if (h.platform==="pornhub") setPhCategory(h.category||"straight");
         if (h.platform==="xnxx")    setXnCategory(h.category||"straight");
         if (h.platform==="tnaflix") setTfCategory(h.category||"straight");
+        if (h.platform==="redtube") setRtCategory(h.category||"straight");
         if (h.platform==="xhamster"||h.platform==="xvideos") setSiteCategory(h.category||"straight");
         search({platform:h.platform, type:h.type, query:h.query||"", category:h.category});
       }
@@ -1907,7 +1916,7 @@
         if (firstRenderRef.current) { firstRenderRef.current = false; return; }
         if (platform === "x" && (type === "home" || type === "following")) search();
         if (platform !== "x" && type === "home") search();
-      }, [type, platform, xfCategory, phCategory, xnCategory, xnSort, xnDuration, tfCategory, tfSort, tfDuration, siteCategory]); // eslint-disable-line
+      }, [type, platform, xfCategory, phCategory, xnCategory, xnSort, xnDuration, tfCategory, tfSort, tfDuration, rtCategory, rtSort, rtDuration, siteCategory]); // eslint-disable-line
 
       // Auto-scroll infinito: carrega mais ao chegar perto do fim da página
       useEffect(()=>{
@@ -1981,10 +1990,11 @@
                          : ePlatform==="pornhub" ? phCategory
                          : ePlatform==="xnxx" ? xnCategory
                          : ePlatform==="tnaflix" ? tfCategory
+                         : ePlatform==="redtube" ? rtCategory
                          : (ePlatform==="xhamster"||ePlatform==="xvideos") ? siteCategory
                          : undefined;
         const needQuery = ePlatform==="x"                                          ? (eType!=="home" && eType!=="following")
-                        : (ePlatform==="xfree"||ePlatform==="pornhub"||ePlatform==="xnxx"||ePlatform==="tnaflix"||ePlatform==="xhamster"||ePlatform==="xvideos") ? eType!=="home"
+                        : (ePlatform==="xfree"||ePlatform==="pornhub"||ePlatform==="xnxx"||ePlatform==="tnaflix"||ePlatform==="redtube"||ePlatform==="xhamster"||ePlatform==="xvideos") ? eType!=="home"
                         : true;
         if(needQuery&&!eQuery.trim()) return;
         setSearching(true); setErr(""); setResults([]); setHasMore(false); setSearchId(null); clearChecked();
@@ -1999,7 +2009,9 @@
                   ? {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,category:eCategory,sort:xnSort,duration:xnDuration,count}
                   : ePlatform==="tnaflix"
                     ? {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,category:eCategory,sort:tfSort,duration:tfDuration,count}
-                    : {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,sort:siteSort,duration:siteDuration,category:eCategory,count};
+                    : ePlatform==="redtube"
+                      ? {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,category:eCategory,sort:rtSort,duration:rtDuration,count}
+                      : {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,sort:siteSort,duration:siteDuration,category:eCategory,count};
           const r=await fetch(API+"/search/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
           const {task_id}=await r.json();
           const meta = {platform:ePlatform, type:eType, query:eQuery.trim(), category:eCategory};
@@ -2027,7 +2039,7 @@
       // a time. Sequential on purpose: xHamster/XVideos/Pornhub all share one
       // backend session slot (_SITE_SS), so firing them concurrently would
       // have one clobber another's in-progress pagination state.
-      const ALL_PLATFORMS = ["x","xhamster","xvideos","xfree","pornhub","xnxx","tnaflix"];
+      const ALL_PLATFORMS = ["x","xhamster","xvideos","xfree","pornhub","xnxx","tnaflix","redtube"];
       const [searchAllMode, setSearchAllMode] = useState(false);
       const [allResults,    setAllResults]    = useState([]);
       const [searchingAll,  setSearchingAll]  = useState(false);
@@ -2090,7 +2102,7 @@
         setSearchingAll(true); setAllResults([]); setAllErr("");
         setAllSearchIds({}); setAllHasMore({}); setAllLoadingMore({}); setCheckedAll(new Set());
         try{
-          const body = {query:q, xfCategory, phCategory, xnCategory, tfCategory, siteCategory, count};
+          const body = {query:q, xfCategory, phCategory, xnCategory, tfCategory, rtCategory, siteCategory, count};
           const r = await fetch(API+"/search/start_all",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
           const {task_id} = await r.json();
           localStorage.setItem(SEARCH_ALL_TASK_KEY, JSON.stringify({taskId:task_id, query:q}));
@@ -2204,6 +2216,7 @@
                   {id:"pornhub",  label:"Pornhub"},
                   {id:"xnxx",     label:"XNXX"},
                   {id:"tnaflix",  label:"TNAFlix"},
+                  {id:"redtube",  label:"RedTube"},
                   {id:"all",      label:"🌐 Tudo"},
                 ].map(p=>{
                   const active = p.id==="all" ? searchAllMode : (!searchAllMode && platform===p.id);
@@ -2460,6 +2473,76 @@
                 </div>
               )}
 
+              {/* RedTube: mode tabs (Home / Busca) */}
+              {platform==="redtube"&&(
+                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"var(--bg-input)",padding:4,borderRadius:10,border:"1px solid var(--border)"}}>
+                  {[{id:"home",label:"🏠 Home"},{id:"search",label:"🔍 Busca"}].map(t=>(
+                    <button key={t.id} onClick={()=>setType(t.id)}
+                      style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",
+                        background:type===t.id?"rgba(29,155,240,.15)":"transparent",
+                        color:type===t.id?"#1d9bf0":"var(--text-2)",fontSize:12,fontWeight:type===t.id?700:400,
+                        cursor:"pointer",transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* RedTube: category filter (Heterossexual / Gay / Sáfica / Trans) — aplica-se a Home e Busca */}
+              {platform==="redtube"&&(
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Categoria</label>
+                  <select value={rtCategory} onChange={e=>setRtCategory(e.target.value)}
+                    style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                      borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    <option value="straight">❤️ Heterossexual</option>
+                    <option value="gay">🏳️‍🌈 Gay</option>
+                    <option value="sapphic">🏳️‍🌈 Sáfica</option>
+                    <option value="trans">🏳️‍⚧️ Trans</option>
+                  </select>
+                  {rtCategory!=="straight"&&type==="search"&&(
+                    <div style={{marginTop:8,padding:"10px 12px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:8,fontSize:12,color:"var(--text-2)",lineHeight:1.5}}>
+                      {rtCategory==="gay"
+                        ? "ℹ️ A busca por palavra-chave funciona normalmente na categoria Gay do RedTube."
+                        : "ℹ️ O RedTube não tem busca por palavra-chave combinada com essa categoria — mostrando os vídeos em destaque dela (a busca digitada é ignorada)."}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* RedTube: ordenar por / duração — só combinam de forma confiável com a
+                  categoria Heterossexual (confirmado testando direto: a maioria das
+                  ordenações cai de volta pro padrão quando combinada com Gay, e a
+                  duração mal filtra o Gay — a maior parte dos IDs continua igual com
+                  ou sem o filtro), então só aparecem nessa categoria. */}
+              {platform==="redtube"&&rtCategory==="straight"&&(
+                <div style={{display:"flex",gap:10,marginBottom:14}}>
+                  <div style={{flex:1}}>
+                    <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Ordenar por</label>
+                    <select value={rtSort} onChange={e=>setRtSort(e.target.value)}
+                      style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                        borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                      <option value="relevance">Relevância</option>
+                      <option value="newest">Mais recentes</option>
+                      <option value="top">Mais bem avaliados</option>
+                      <option value="views">Mais vistos</option>
+                      <option value="longest">Mais longos</option>
+                    </select>
+                  </div>
+                  <div style={{flex:1}}>
+                    <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Duração</label>
+                    <select value={rtDuration} onChange={e=>setRtDuration(e.target.value)}
+                      style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                        borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                      <option value="any">Qualquer</option>
+                      <option value="short">Curto (até 10min)</option>
+                      <option value="medium">Médio (10-20min)</option>
+                      <option value="long">Longo (20min+)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
               {/* xHamster/XVideos: mode tabs (Home / Busca) */}
               {(platform==="xhamster"||platform==="xvideos")&&(
                 <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"var(--bg-input)",padding:4,borderRadius:10,border:"1px solid var(--border)"}}>
@@ -2499,7 +2582,7 @@
                 <div style={{position:"relative",marginBottom:14}}>
                   <div style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"var(--text-2)"}}><SrchI/></div>
                   <input value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&search()}
-                    placeholder={platform==="x"?ph[type]:(platform==="xhamster"?"Buscar no xHamster…":(platform==="xfree"?"Buscar no xFree…":platform==="pornhub"?"Buscar no Pornhub…":platform==="xnxx"?"Buscar no XNXX…":platform==="tnaflix"?"Buscar no TNAFlix…":"Buscar no XVideos…"))}
+                    placeholder={platform==="x"?ph[type]:(platform==="xhamster"?"Buscar no xHamster…":(platform==="xfree"?"Buscar no xFree…":platform==="pornhub"?"Buscar no Pornhub…":platform==="xnxx"?"Buscar no XNXX…":platform==="tnaflix"?"Buscar no TNAFlix…":platform==="redtube"?"Buscar no RedTube…":"Buscar no XVideos…"))}
                     style={{width:"100%",padding:"12px 14px 12px 42px",background:"var(--bg-input)",border:"1px solid var(--border)",borderRadius:10,color:"var(--text)",fontSize:14,transition:"border-color .15s"}}
                     onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="var(--border)"}/>
                 </div>
@@ -2529,6 +2612,11 @@
               {platform==="tnaflix"&&type==="home"&&(
                 <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
                   🏠 Carregará os vídeos em destaque da categoria selecionada no <strong style={{color:"var(--text-3)"}}>TNAFlix</strong> (sem necessidade de login).
+                </div>
+              )}
+              {platform==="redtube"&&type==="home"&&(
+                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
+                  🏠 Carregará os vídeos em destaque da categoria selecionada no <strong style={{color:"var(--text-3)"}}>RedTube</strong> (sem necessidade de login).
                 </div>
               )}
               {(platform==="xhamster"||platform==="xvideos")&&type==="home"&&(
@@ -2592,13 +2680,14 @@
                 const disabled  = searching||(needQuery&&!query.trim());
                 const btnLabel  = platform==="x"&&type==="home"        ? "Carregar Para Você"
                                 : platform==="x"&&type==="following"   ? "Carregar Seguindo"
-                                : type==="home"                        ? "Carregar "+({xfree:"xFree",pornhub:"Pornhub",xnxx:"XNXX",tnaflix:"TNAFlix",xhamster:"xHamster",xvideos:"XVideos"}[platform]||platform)+" Home"
+                                : type==="home"                        ? "Carregar "+({xfree:"xFree",pornhub:"Pornhub",xnxx:"XNXX",tnaflix:"TNAFlix",redtube:"RedTube",xhamster:"xHamster",xvideos:"XVideos"}[platform]||platform)+" Home"
                                 : platform==="xhamster"                ? "Buscar no xHamster"
                                 : platform==="xvideos"                 ? "Buscar no XVideos"
                                 : platform==="xfree"                   ? "Buscar no xFree"
                                 : platform==="pornhub"                 ? "Buscar no Pornhub"
                                 : platform==="xnxx"                    ? "Buscar no XNXX"
                                 : platform==="tnaflix"                 ? "Buscar no TNAFlix"
+                                : platform==="redtube"                 ? "Buscar no RedTube"
                                 : "Buscar Vídeos";
                 return (
                   <button onClick={()=>search()} disabled={disabled}

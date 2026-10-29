@@ -2,7 +2,7 @@
 
 *[Leia em português](README.pt-BR.md)*
 
-Local web application to search and download videos from **X (Twitter)**, **XHamster**, **XVideos**, **xFree**, **Pornhub**, **XNXX** and **TNAFlix**.
+Local web application to search and download videos from **X (Twitter)**, **XHamster**, **XVideos**, **xFree**, **Pornhub**, **XNXX**, **TNAFlix** and **RedTube**.
 
 > See [ROADMAP.md](ROADMAP.md) for what's already done and what's planned next.
 
@@ -282,17 +282,32 @@ Direct HTML page scraping, no headless browser (`_scrape_tnaflix`). Two tabs —
 - **Views use English dot-decimal formatting** (e.g. `33.2K`) — same as Pornhub, so `_scrape_tnaflix` reuses `_parse_pornhub_views` instead of a third near-identical parser.
 - **Sort and duration exist, but only apply to Home/category browsing** — confirmed against the live site: the search results page renders the exact same "Duration"/"Uploaded" dropdowns as a category page, but `?d=`/`?u=` have zero effect there (identical result IDs with or without them on the same `what=` query); only a Home/category request actually honors `?d=` (its sort is a path segment instead — `featured`/`new`/`toprated` on the homepage vs. `featured`/`most-recent`/`top-rated` on a `/<tag>-porn` page, two different slug sets for the same three options). So the frontend only shows the sort/duration selects while the Home tab is active, and `search()` doesn't send them at all for a keyword search.
 
+### RedTube (www.redtube.com) — via HTTP
+Direct HTML page scraping, no headless browser (`_scrape_redtube`). Two tabs — Home and Search — plus a category:
+
+| Category | Browse (Home) | Keyword search |
+|---|---|---|
+| ❤️ Straight | homepage (`/`) | `/?search=<query>` |
+| 🏳️‍🌈 Gay | `/gay` | `/gay?search=<query>` |
+| 🏳️‍🌈 Sapphic | `/redtube/lesbian` | **no dedicated endpoint** |
+| 🏳️‍⚧️ Trans | `/redtube/transgender` | **no dedicated endpoint** |
+
+- **Straight and Gay genuinely combine with a query** — confirmed against the live site: 0-1 shared video IDs between two different search terms under the same category, for both. Sapphic and Trans are tag-only pages — a typed query is silently dropped (100% identical results regardless of the term), same limitation as Pornhub's Trans/XNXX's Sapphic.
+- **Sort (`relevance`/`new`/`top`/`mostviewed`/`longest`) and the `min_duration`/`max_duration` range filter (in minutes) only reliably combine with Straight** — confirmed against the live site that most sort values silently fall back to plain `/gay` when combined with Gay (only `/top/gay` survives as a distinct URL) and that `min_duration`/`max_duration` barely narrows Gay results at all (55 of 65 ids still shared with the unfiltered page). Rather than offer selects that quietly no-op or barely do anything for Gay/Sapphic/Trans, both are shown in the UI only while the category is Straight.
+- **Card selector**: the `<li>` wrapper's own `id` prefix differs by page template (`tags_videos_<id>` on search results, `browse_<id>` on Home/category listings, confirmed against both live) — splitting on either alone misses the other template entirely. `class="js-pop thumbnail-card` is identical across both and appears exactly once per real card, so `_scrape_redtube` splits on that instead; `data-video-id` itself isn't a safe split marker since it appears twice per card (once on the `<li>`, once on the nested `<a>`).
+- **Views use English dot-decimal formatting** (e.g. `123K`) — same as Pornhub/TNAFlix, so `_scrape_redtube` reuses `_parse_pornhub_views`.
+
 ---
 
 ## Background Search
 
-A fresh search — especially X/xFree via Selenium, or "buscar em tudo" running all 7 platforms one after another — can take anywhere from a few seconds to well over a minute. That used to mean the whole wait lived inside one blocking `fetch()` on the client; if the tab got backgrounded (phone screen locks, user switches app), mobile browsers throttle or fully suspend JS and networking, and the in-flight request either stalls indefinitely or gets dropped outright, losing the search. Same fix as [background downloads](#video-download): the actual work moves into a server-side thread that keeps running regardless of what the client tab does.
+A fresh search — especially X/xFree via Selenium, or "buscar em tudo" running all 8 platforms one after another — can take anywhere from a few seconds to well over a minute. That used to mean the whole wait lived inside one blocking `fetch()` on the client; if the tab got backgrounded (phone screen locks, user switches app), mobile browsers throttle or fully suspend JS and networking, and the in-flight request either stalls indefinitely or gets dropped outright, losing the search. Same fix as [background downloads](#video-download): the actual work moves into a server-side thread that keeps running regardless of what the client tab does.
 
 `/api/search/start` and `/api/search/start_all` kick off the real work in a background thread and return a `task_id` immediately; the client polls `GET /api/search/task/<tid>` every 1.5s until it reports `"complete"` or `"error"`. The `task_id` is persisted to `localStorage` (`scrapperx_search_task` / `scrapperx_search_all_task`) while a search is in flight, and a mount-time effect in `App` checks for one and resumes polling if found — closing the tab, or the OS killing a backgrounded one outright, and reopening later reconnects to a search that kept running server-side the entire time, with results ready as soon as it finishes. `/api/search` itself is untouched and still works exactly as before for a synchronous call — nothing was removed, only added.
 
 **Reusing the existing view instead of duplicating it**: `_call_search_view(body)` invokes the existing `search()` Flask view function via `app.test_request_context(...)`, which synthesizes a real request/app context so `request.json` etc. work normally inside — then `app.make_response()` normalizes whatever the view returned (a bare `Response`, or a `(body, status)` tuple, exactly like Flask's own dispatcher would for a real HTTP request) into a consistent `(status_code, dict)` pair. This reuses every branch of the existing search logic (xfree/xhamster/xvideos/pornhub/X, retry logic, session bookkeeping) verbatim from a background thread, rather than re-implementing any of it for async execution.
 
-**The aggregate case moved server-side entirely**, not just wrapped: `_run_aggregate_search_task()` loops through all 7 platforms sequentially *inside the background thread*, calling `_call_search_view()` for each and accumulating tagged results, per-platform `search_id`s, and per-platform `has_more` into the task's state as it goes — mirroring exactly what the old client-side `for` loop used to do, just moved off the tab. This mattered specifically because a client-side `await`-based loop is JS running in the tab, which is exactly what gets suspended when a mobile browser backgrounds it; keeping the loop client-side while only the individual `/api/search` calls became async would have defeated the whole point for the slowest, most-likely-to-be-left-running search mode. A platform that errors doesn't abort the run — the loop just moves on to the next one, same tolerance the old client-side version had.
+**The aggregate case moved server-side entirely**, not just wrapped: `_run_aggregate_search_task()` loops through all 8 platforms sequentially *inside the background thread*, calling `_call_search_view()` for each and accumulating tagged results, per-platform `search_id`s, and per-platform `has_more` into the task's state as it goes — mirroring exactly what the old client-side `for` loop used to do, just moved off the tab. This mattered specifically because a client-side `await`-based loop is JS running in the tab, which is exactly what gets suspended when a mobile browser backgrounds it; keeping the loop client-side while only the individual `/api/search` calls became async would have defeated the whole point for the slowest, most-likely-to-be-left-running search mode. A platform that errors doesn't abort the run — the loop just moves on to the next one, same tolerance the old client-side version had.
 
 **Deliberately out of scope**: `/api/search/more` (pagination / "load more") stays synchronous. It's typically fast (one page, not a fresh multi-scroll gather) and triggered by explicit engagement (scrolling near the bottom, or clicking a button) while the user is already looking at results on screen — a different situation from "I started a search and want to walk away," which is what this feature targets.
 
@@ -323,7 +338,7 @@ Validated at three levels: a Python test using Flask's test client confirming a 
 | POST | `/api/search` | Search videos (first page), synchronous |
 | POST | `/api/search/more` | Load next page, synchronous |
 | POST | `/api/search/start` | Start a single-platform search as a background task |
-| POST | `/api/search/start_all` | Start a "buscar em tudo" (all 7 platforms) search as a background task |
+| POST | `/api/search/start_all` | Start a "buscar em tudo" (all 8 platforms) search as a background task |
 | GET | `/api/search/task/<tid>` | Poll a background search task's status/results |
 | GET | `/api/history` | List search history/favorites (server-side, SQLite) |
 | POST | `/api/history` | Record a search into history (dedups by platform+type+query+category) |

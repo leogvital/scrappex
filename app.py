@@ -824,7 +824,7 @@ def _new_site_ss():
     }
 
 
-_SITE_SS = {site: _new_site_ss() for site in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix")}
+_SITE_SS = {site: _new_site_ss() for site in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube")}
 _SITE_SS_TIMEOUT = 600
 
 # ── xFree session (Selenium — both home and search load/paginate via client-side
@@ -1453,6 +1453,129 @@ def _scrape_tnaflix(query, page=1, category="straight", sort="featured", duratio
     return results, (None if results else "Nenhum resultado encontrado.")
 
 
+# ── RedTube category/sort/duration. Confirmed against the live site: straight
+# (no prefix) and gay (/gay) both genuinely combine with a search query — 0-1
+# shared IDs between different search terms under the same category. Trans
+# (/redtube/transgender) and Sapphic (/redtube/lesbian) are tag-only pages —
+# the query is silently dropped (100% identical results regardless of the
+# term typed), same limitation as Pornhub's Trans / XNXX's Sapphic. Sort
+# (relevance/new/top/mostviewed/longest) and the min_duration/max_duration
+# range filter were only confirmed to reliably combine with straight — most
+# sort values silently fall back to plain /gay when combined with Gay (only
+# "top" survives as its own URL), and duration barely narrows Gay results at
+# all (55/65 ids still shared with the unfiltered page) — so both selectors
+# are restricted to straight in the UI rather than offering options that
+# quietly no-op or barely do anything for the other three categories.
+_RT_CATEGORY = {
+    "straight": {"prefix": None, "combinable": True},
+    "gay":      {"prefix": "gay", "combinable": True},
+    "sapphic":  {"prefix": "redtube/lesbian", "combinable": False},
+    "trans":    {"prefix": "redtube/transgender", "combinable": False},
+}
+_RT_SORT = {"relevance": None, "newest": "new", "top": "top", "views": "mostviewed", "longest": "longest"}
+_RT_DURATION = {"any": None, "short": (0, 10), "medium": (10, 20), "long": (20, None)}
+
+
+def _scrape_redtube(query, page=1, category="straight", sort="relevance", duration="any"):
+    """
+    Scrape one page of www.redtube.com results (~30-65 videos per page, 1-based).
+    category: straight | gay | sapphic | trans. sort/duration only applied when
+    category == "straight" (see _RT_CATEGORY above for why). Trans/Sapphic
+    ignore `query` entirely and always browse their bare tag page.
+    Returns (results_list, error_or_None).
+    """
+    import re, requests
+    from html import unescape
+
+    cat = _RT_CATEGORY.get(category, _RT_CATEGORY["straight"])
+    q = query if cat["combinable"] else ""
+
+    segments = []
+    if not cat["combinable"]:
+        segments = [cat["prefix"]]
+    else:
+        if category == "straight":
+            sort_seg = _RT_SORT.get(sort)
+            if sort_seg:
+                segments.append(sort_seg)
+        if cat["prefix"]:
+            segments.append(cat["prefix"])
+    path = "/" + "/".join(segments) if segments else "/"
+
+    params = {}
+    if q:
+        params["search"] = q
+    if page > 1:
+        params["page"] = page
+    if category == "straight":
+        dur = _RT_DURATION.get(duration)
+        if dur:
+            lo, hi = dur
+            if lo:
+                params["min_duration"] = lo
+            if hi:
+                params["max_duration"] = hi
+
+    url = f"https://www.redtube.com{path}"
+
+    try:
+        r = requests.get(url, params=params, headers=_SITE_HEADERS, timeout=20)
+        r.raise_for_status()
+    except Exception as ex:
+        return [], f"Erro ao acessar RedTube: {ex}"
+
+    html = r.text
+    # The <li> wrapper's own id prefix differs by page template — "tags_videos_"
+    # on search results, "browse_" on category/Home listings (confirmed against
+    # both live) — so splitting on that id would miss one or the other. The
+    # shared `class="js-pop thumbnail-card` is identical across both and
+    # appears exactly once per real card (data-video-id itself appears twice —
+    # once on this <li>, once on the nested <a> — so it isn't a safe marker).
+    positions = [m.start() for m in re.finditer(r'<li[^>]*class="js-pop thumbnail-card', html)]
+    results = []
+    for i, start in enumerate(positions):
+        end   = positions[i + 1] if i + 1 < len(positions) else len(html)
+        block = html[start:end]
+
+        id_m   = re.search(r'data-video-id="(\d+)"', block)
+        href_m = re.search(r'class="video_link[^"]*"\s+href="(/\d+)"', block)
+        if not id_m or not href_m:
+            continue
+
+        title_m = re.search(r'alt="([^"]+)"', block)
+        thumb_m = re.search(r'data-o_thumb="([^"]+)"', block)
+        dur_m   = re.search(r'video-properties tm_video_duration">([\d:]+)<', block)
+        user_m  = re.search(r'class="author-title-text[^"]*"[^>]*>([^<]+)</a>', block)
+        views_m = re.search(r"class='info-views'>([\d.,]+[MK]?)<", block)
+
+        dur_sec = 0
+        if dur_m:
+            try:
+                parts = [int(p) for p in dur_m.group(1).strip().split(":")]
+                if len(parts) == 3:
+                    dur_sec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+                elif len(parts) == 2:
+                    dur_sec = parts[0] * 60 + parts[1]
+            except ValueError:
+                pass
+
+        results.append({
+            "id":          id_m.group(1),
+            "url":         f"https://www.redtube.com{href_m.group(1)}",
+            "title":       unescape(title_m.group(1)) if title_m else f"RedTube #{id_m.group(1)}",
+            "uploader":    unescape(user_m.group(1)).strip() if user_m else "",
+            "uploader_id": "",
+            "duration":    dur_sec,
+            "thumbnail":   thumb_m.group(1) if thumb_m else "",
+            # Same English dot-decimal K/M formatting as Pornhub ("123K") —
+            # reuses that parser instead of duplicating an identical one.
+            "view_count":  _parse_pornhub_views(views_m.group(1)) if views_m else 0,
+            "like_count":  0,
+        })
+
+    return results, (None if results else "Nenhum resultado encontrado.")
+
+
 def _parse_xfree_views(s):
     """Convert '1.1M' / '66.8K' / '830' → int."""
     s = (s or "").strip().upper().replace(" ", "").replace(",", "")
@@ -1540,6 +1663,8 @@ def search_site_page(site, query, page, sort="relevance", duration="any", catego
         results, err = _scrape_xnxx(query, page=page, category=category, sort=sort, duration=duration)
     elif site == "tnaflix":
         results, err = _scrape_tnaflix(query, page=page, category=category, sort=sort, duration=duration)
+    elif site == "redtube":
+        results, err = _scrape_redtube(query, page=page, category=category, sort=sort, duration=duration)
     else:
         return [], 0, f"Plataforma não suportada: {site}"
 
@@ -2562,7 +2687,7 @@ def search():
         return jsonify({"error": f"Erro no navegador: {last_err}", "results": [], "has_more": False}), 500
 
     # ── External sites (XHamster, XVideos, Pornhub, XNXX, TNAFlix) ────────────
-    if platform in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix"):
+    if platform in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube"):
         # query="" is valid now — it means "Home" (browse the category's landing feed)
         sort     = d.get("sort", "relevance")
         duration = d.get("duration", "any")
@@ -2698,7 +2823,7 @@ def search():
 # still works exactly as before for anything that wants a synchronous call.
 _search_tasks = {}
 _SEARCH_TASK_MAX_AGE = 3600  # seconds — stale finished tasks get swept by the watchdog
-_ALL_SEARCH_PLATFORMS = ["x", "xhamster", "xvideos", "xfree", "pornhub", "xnxx", "tnaflix"]
+_ALL_SEARCH_PLATFORMS = ["x", "xhamster", "xvideos", "xfree", "pornhub", "xnxx", "tnaflix", "redtube"]
 
 
 def _call_search_view(body):
@@ -2746,6 +2871,8 @@ def _body_for_all_platform(platform, d):
         return {"query": q, "platform": "xnxx", "type": "search", "category": d.get("xnCategory", "straight"), "count": count}
     if platform == "tnaflix":
         return {"query": q, "platform": "tnaflix", "type": "search", "category": d.get("tfCategory", "straight"), "count": count}
+    if platform == "redtube":
+        return {"query": q, "platform": "redtube", "type": "search", "category": d.get("rtCategory", "straight"), "count": count}
     return {"query": q, "platform": platform, "type": "search", "sort": "relevance", "duration": "any",
             "category": d.get("siteCategory", "straight"), "count": count}
 

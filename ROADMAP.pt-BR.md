@@ -18,6 +18,7 @@ Status do projeto e próximos passos. Mantido junto com o [README.pt-BR.md](READ
 | Pornhub | ✓ (Trans sem busca por texto — limitação do site) | ✓ | Hétero/Gay/Sáfica/Trans | HTTP + `curl_cffi` (impersonation de TLS) |
 | XNXX | ✓ (Sáfica sem busca por texto — limitação do site) | ✓ | Hétero/Gay/Sáfica/Trans | HTTP |
 | TNAFlix | ✓ (só Hétero — outras categorias sem busca por texto, limitação do site) | ✓ (sem paginação — limitação do site) | Hétero/Gay/Sáfica/Trans | HTTP |
+| RedTube | ✓ (Hétero/Gay — Sáfica/Trans sem busca por texto, limitação do site) | ✓ | Hétero/Gay/Sáfica/Trans | HTTP |
 
 ### Conta e sessão
 - Login do app com usuário/senha configuráveis via `.env.local` (fora do repositório — veja `.env.local.example`), sessão persistente — sobrevive a fechar o navegador (cookie de 30 dias) e a reiniciar o servidor (chave secreta salva em disco)

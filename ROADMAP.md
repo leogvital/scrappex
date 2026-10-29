@@ -18,6 +18,7 @@ Project status and next steps. Kept alongside [README.md](README.md) (which docu
 | Pornhub | ✓ (Trans has no keyword search — site limitation) | ✓ | Straight/Gay/Sapphic/Trans | HTTP + `curl_cffi` (TLS impersonation) |
 | XNXX | ✓ (Sapphic has no keyword search — site limitation) | ✓ | Straight/Gay/Sapphic/Trans | HTTP |
 | TNAFlix | ✓ (Straight only — other categories have no keyword search, site limitation) | ✓ (no pagination — site limitation) | Straight/Gay/Sapphic/Trans | HTTP |
+| RedTube | ✓ (Straight/Gay — Sapphic/Trans have no keyword search, site limitation) | ✓ | Straight/Gay/Sapphic/Trans | HTTP |
 
 ### Account and session
 - App login with username/password configurable via `.env.local` (outside the repository — see `.env.local.example`), persistent session — survives closing the browser (30-day cookie) and restarting the server (secret key saved to disk)

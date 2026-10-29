@@ -2,7 +2,7 @@
 
 *[Read in English](README.md)*
 
-Aplicação web local para buscar e baixar vídeos do **X (Twitter)**, **XHamster**, **XVideos**, **xFree**, **Pornhub**, **XNXX** e **TNAFlix**.
+Aplicação web local para buscar e baixar vídeos do **X (Twitter)**, **XHamster**, **XVideos**, **xFree**, **Pornhub**, **XNXX**, **TNAFlix** e **RedTube**.
 
 > Veja o [ROADMAP.pt-BR.md](ROADMAP.pt-BR.md) para o que já foi feito e os próximos passos planejados.
 
@@ -282,17 +282,32 @@ Scraping direto da página HTML, sem navegador headless (`_scrape_tnaflix`). Dua
 - **Visualizações usam formatação decimal em inglês** (ex. `33.2K`) — igual ao Pornhub, então `_scrape_tnaflix` reaproveita `_parse_pornhub_views` em vez de um terceiro parser quase idêntico.
 - **Ordenação e duração existem, mas só valem pra Home/categoria** — confirmado direto contra o site: a página de busca renderiza os mesmos dropdowns "Duration"/"Uploaded" de uma página de categoria, mas `?d=`/`?u=` não têm nenhum efeito ali (IDs de resultado idênticos com ou sem eles na mesma query `what=`); só uma chamada de Home/categoria realmente respeita `?d=` (a ordenação lá é um segmento de caminho — `featured`/`new`/`toprated` na página inicial contra `featured`/`most-recent`/`top-rated` numa página `/<tag>-porn`, dois conjuntos de slug diferentes pras mesmas três opções). Por isso o frontend só mostra os seletores de ordenação/duração com a aba Home ativa, e `search()` nem envia esses campos numa busca por palavra-chave.
 
+### RedTube (www.redtube.com) — via HTTP
+Scraping direto da página HTML, sem navegador headless (`_scrape_redtube`). Duas abas — Home e Busca — mais categoria:
+
+| Categoria | Browse (Home) | Busca por palavra-chave |
+|---|---|---|
+| ❤️ Heterossexual | página inicial (`/`) | `/?search=<query>` |
+| 🏳️‍🌈 Gay | `/gay` | `/gay?search=<query>` |
+| 🏳️‍🌈 Sáfica | `/redtube/lesbian` | **sem endpoint dedicado** |
+| 🏳️‍⚧️ Trans | `/redtube/transgender` | **sem endpoint dedicado** |
+
+- **Heterossexual e Gay combinam de verdade com uma query** — confirmado direto contra o site: 0-1 IDs de vídeo compartilhados entre dois termos de busca diferentes na mesma categoria, pras duas. Sáfica e Trans são páginas só de tag — uma query digitada é silenciosamente descartada (resultados 100% idênticos independente do termo), mesma limitação do Trans do Pornhub/Sáfica do XNXX.
+- **Ordenação (`relevance`/`new`/`top`/`mostviewed`/`longest`) e o filtro de faixa `min_duration`/`max_duration` (em minutos) só combinam de forma confiável com Heterossexual** — confirmado direto contra o site que a maioria dos valores de ordenação cai silenciosamente de volta pro `/gay` puro quando combinados com Gay (só `/top/gay` sobrevive como URL distinta) e que `min_duration`/`max_duration` mal filtra os resultados do Gay (55 dos 65 ids continuam compartilhados com a página sem filtro). Em vez de oferecer seletores que silenciosamente não fazem nada ou quase nada pro Gay/Sáfica/Trans, os dois só aparecem na UI enquanto a categoria é Heterossexual.
+- **Seletor de card**: o prefixo do `id` do próprio `<li>` muda conforme o template da página (`tags_videos_<id>` nos resultados de busca, `browse_<id>` nas listagens de Home/categoria, confirmado contra os dois ao vivo) — o split em só um dos dois perde o outro template inteiro. `class="js-pop thumbnail-card` é idêntico nos dois e aparece exatamente uma vez por card de verdade, então `_scrape_redtube` corta nisso em vez disso; o próprio `data-video-id` não é um marcador de corte seguro já que aparece duas vezes por card (uma no `<li>`, outra no `<a>` aninhado).
+- **Visualizações usam formatação decimal em inglês** (ex. `123K`) — igual ao Pornhub/TNAFlix, então `_scrape_redtube` reaproveita `_parse_pornhub_views`.
+
 ---
 
 ## Busca em Background
 
-Uma busca nova — principalmente X/xFree via Selenium, ou "buscar em tudo" rodando as 7 plataformas uma atrás da outra — pode levar de alguns segundos a mais de um minuto. Isso costumava significar que a espera inteira vivia dentro de um único `fetch()` bloqueado no cliente; se a aba fosse pra segundo plano (tela do celular trava, usuário troca de app), navegadores mobile limitam ou suspendem completamente JS e rede, e a requisição em andamento ou trava indefinidamente ou é derrubada de vez, perdendo a busca. Mesma correção dos [downloads em background](#download-de-vídeos): o trabalho de verdade se move pra uma thread do lado do servidor que continua rodando independente do que a aba do cliente faz.
+Uma busca nova — principalmente X/xFree via Selenium, ou "buscar em tudo" rodando as 8 plataformas uma atrás da outra — pode levar de alguns segundos a mais de um minuto. Isso costumava significar que a espera inteira vivia dentro de um único `fetch()` bloqueado no cliente; se a aba fosse pra segundo plano (tela do celular trava, usuário troca de app), navegadores mobile limitam ou suspendem completamente JS e rede, e a requisição em andamento ou trava indefinidamente ou é derrubada de vez, perdendo a busca. Mesma correção dos [downloads em background](#download-de-vídeos): o trabalho de verdade se move pra uma thread do lado do servidor que continua rodando independente do que a aba do cliente faz.
 
 `/api/search/start` e `/api/search/start_all` disparam o trabalho de verdade numa thread em background e devolvem um `task_id` na hora; o cliente faz polling em `GET /api/search/task/<tid>` a cada 1,5s até reportar `"complete"` ou `"error"`. O `task_id` fica salvo em `localStorage` (`scrapperx_search_task` / `scrapperx_search_all_task`) enquanto a busca está rodando, e um efeito no mount do `App` checa se existe um pendente e retoma o polling se achar — fechar a aba, ou o sistema matar uma aba em segundo plano de vez, e reabrir depois reconecta numa busca que continuou rodando no servidor o tempo todo, com o resultado pronto assim que ela termina. O `/api/search` em si continua intocado e funcionando exatamente como antes pra quem quiser uma chamada síncrona — nada foi removido, só adicionado.
 
 **Reaproveitando a view existente em vez de duplicá-la**: `_call_search_view(body)` invoca a view `search()` do Flask já existente via `app.test_request_context(...)`, que sintetiza um request/app context de verdade pra que `request.json` etc. funcionem normalmente por dentro — depois `app.make_response()` normaliza o que quer que a view tenha retornado (um `Response` puro, ou uma tupla `(body, status)`, exatamente como o próprio dispatcher do Flask faria pra uma requisição HTTP real) num par `(status_code, dict)` consistente. Isso reaproveita cada ramo da lógica de busca existente (xfree/xhamster/xvideos/pornhub/X, retry, controle de sessão) tal e qual a partir de uma thread em background, em vez de reimplementar qualquer coisa pra execução assíncrona.
 
-**O caso agregado se moveu inteiramente pro servidor**, não só foi envolvido: `_run_aggregate_search_task()` percorre as 7 plataformas sequencialmente *dentro da thread em background*, chamando `_call_search_view()` pra cada uma e acumulando resultados marcados, `search_id` por plataforma e `has_more` por plataforma no estado da task conforme avança — espelhando exatamente o que o `for` do lado do cliente fazia antes, só que tirado da aba. Isso importava especificamente porque um loop baseado em `await` do lado do cliente é JS rodando na aba, que é exatamente o que fica suspenso quando um navegador mobile coloca a aba em segundo plano; manter o loop do lado do cliente enquanto só as chamadas individuais de `/api/search` viravam assíncronas teria anulado o propósito inteiro pro modo de busca mais lento e mais provável de ficar rodando enquanto o usuário sai. Uma plataforma que dá erro não aborta a execução — o loop simplesmente segue pra próxima, a mesma tolerância que a versão antiga do lado do cliente tinha.
+**O caso agregado se moveu inteiramente pro servidor**, não só foi envolvido: `_run_aggregate_search_task()` percorre as 8 plataformas sequencialmente *dentro da thread em background*, chamando `_call_search_view()` pra cada uma e acumulando resultados marcados, `search_id` por plataforma e `has_more` por plataforma no estado da task conforme avança — espelhando exatamente o que o `for` do lado do cliente fazia antes, só que tirado da aba. Isso importava especificamente porque um loop baseado em `await` do lado do cliente é JS rodando na aba, que é exatamente o que fica suspenso quando um navegador mobile coloca a aba em segundo plano; manter o loop do lado do cliente enquanto só as chamadas individuais de `/api/search` viravam assíncronas teria anulado o propósito inteiro pro modo de busca mais lento e mais provável de ficar rodando enquanto o usuário sai. Uma plataforma que dá erro não aborta a execução — o loop simplesmente segue pra próxima, a mesma tolerância que a versão antiga do lado do cliente tinha.
 
 **Propositalmente fora do escopo**: `/api/search/more` (paginação / "carregar mais") continua síncrono. Costuma ser rápido (uma página, não uma nova varredura com múltiplos scrolls) e é disparado com o usuário já engajado, olhando os resultados na tela — uma situação diferente de "comecei uma busca e quero sair", que é o que essa funcionalidade resolve.
 
@@ -323,7 +338,7 @@ Validado em três níveis: um teste Python usando o test client do Flask confirm
 | POST | `/api/search` | Buscar vídeos (primeira página), síncrono |
 | POST | `/api/search/more` | Carregar próxima página, síncrono |
 | POST | `/api/search/start` | Iniciar busca de plataforma única como task em background |
-| POST | `/api/search/start_all` | Iniciar busca "buscar em tudo" (7 plataformas) como task em background |
+| POST | `/api/search/start_all` | Iniciar busca "buscar em tudo" (8 plataformas) como task em background |
 | GET | `/api/search/task/<tid>` | Consultar status/resultados de uma task de busca em background |
 | GET | `/api/history` | Listar histórico de busca/favoritos (persistido no servidor, SQLite) |
 | POST | `/api/history` | Registrar uma busca no histórico (dedup por platform+type+query+category) |
