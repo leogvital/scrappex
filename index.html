@@ -2552,8 +2552,13 @@
                 </div>
               )}
 
-              {/* Site filters: sort + duration (xHamster and XVideos only) */}
-              {platform!=="x"&&platform!=="xfree"&&(
+              {/* Site filters: sort + duration (xHamster and XVideos only — Pornhub has
+                  no sort/duration params at all, and XNXX/TNAFlix already render their
+                  own dedicated versions above; this condition used to be the much looser
+                  `platform!=="x"&&platform!=="xfree"`, which let it through for those
+                  three too and duplicated "Ordenar por"/"Duração" on screen for XNXX and
+                  TNAFlix specifically) */}
+              {(platform==="xhamster"||platform==="xvideos")&&(
                 <div style={{display:"flex",gap:10,marginBottom:14}}>
                   <div style={{flex:1}}>
                     <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Ordenar por</label>
