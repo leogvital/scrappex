@@ -2970,6 +2970,16 @@ def preview_video():
                     key=lambda f: (f.get("height") or 0, f.get("tbr") or 0),
                     reverse=True,
                 )
+            if not combined and info.get("url"):
+                # Some extractors (notably yt-dlp's "generic" one, used for xFree
+                # since it has no dedicated extractor) report a single direct
+                # video URL at the top level of `info` instead of populating
+                # `formats` at all — `combined` being empty doesn't mean there's
+                # nothing playable, just that this particular video wasn't
+                # reported as a formats list. Confirmed against a real xFree URL:
+                # formats == [] but info["url"] was a valid, directly playable
+                # CDN mp4 link.
+                combined = [info]
             if not combined:
                 return jsonify({"error": "Nenhum formato disponível"}), 404
 

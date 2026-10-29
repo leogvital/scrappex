@@ -51,6 +51,7 @@ Project status and next steps. Kept alongside [README.md](README.md) (which docu
 - Missing thumbnails on Pornhub's Home (different card attribute)
 - Cross-page duplicates in Pornhub's pagination (dedup by ID)
 - In-browser "Play" preview (`/api/preview`) doing nothing for XVideos — the format filter required `vcodec`/`acodec` to be explicitly set to something other than `None`, but XVideos' yt-dlp extractor reports every format (mp4 and HLS alike) with both as unset `None` rather than the explicit `"none"` string yt-dlp uses for a genuinely video-only/audio-only track; the filter was treating "not reported" the same as "confirmed absent" and excluding every XVideos format as a result. Download itself was unaffected (a separate, unfiltered yt-dlp call)
+- Same "Play" preview also doing nothing for xFree (and likely other sites hitting the same shape) — yt-dlp's generic extractor (xFree has no dedicated one) sometimes reports a single direct video URL at the *top level* of `info` (`info["url"]`) instead of inside `info["formats"]` at all; `/api/preview` only ever looked at `formats`, so an empty list there was wrongly read as "nothing playable" even when `info["url"]` held a perfectly valid direct CDN link. Now falls back to `info["url"]` when `formats` comes back empty
 - Gunicorn 26 *control socket* permission error (`--no-control-socket`)
 - Download hanging when clicking "Baixar" while more videos were auto-loading (Gunicorn `sync` worker → `gthread` + 4 threads)
 - ~1-1.5 GB RAM leak per Chrome session that crashes on its own (`_hard_kill_driver`)
