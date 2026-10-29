@@ -50,6 +50,7 @@ Project status and next steps. Kept alongside [README.md](README.md) (which docu
 - Login state stuck at `True` even with an expired session (desync fixed)
 - Missing thumbnails on Pornhub's Home (different card attribute)
 - Cross-page duplicates in Pornhub's pagination (dedup by ID)
+- In-browser "Play" preview (`/api/preview`) doing nothing for XVideos — the format filter required `vcodec`/`acodec` to be explicitly set to something other than `None`, but XVideos' yt-dlp extractor reports every format (mp4 and HLS alike) with both as unset `None` rather than the explicit `"none"` string yt-dlp uses for a genuinely video-only/audio-only track; the filter was treating "not reported" the same as "confirmed absent" and excluding every XVideos format as a result. Download itself was unaffected (a separate, unfiltered yt-dlp call)
 - Gunicorn 26 *control socket* permission error (`--no-control-socket`)
 - Download hanging when clicking "Baixar" while more videos were auto-loading (Gunicorn `sync` worker → `gthread` + 4 threads)
 - ~1-1.5 GB RAM leak per Chrome session that crashes on its own (`_hard_kill_driver`)

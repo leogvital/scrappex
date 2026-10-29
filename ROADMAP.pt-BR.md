@@ -50,6 +50,7 @@ Status do projeto e próximos passos. Mantido junto com o [README.pt-BR.md](READ
 - Estado de login preso em `True` mesmo com sessão expirada (dessincronia corrigida)
 - Thumbnails faltando na Home do Pornhub (atributo de card diferente)
 - Duplicatas entre páginas na paginação do Pornhub (dedup por ID)
+- Preview "Play" no navegador (`/api/preview`) não fazendo nada no XVideos — o filtro de formato exigia que `vcodec`/`acodec` estivessem explicitamente definidos como algo diferente de `None`, mas o extrator do yt-dlp pro XVideos devolve todo formato (mp4 e HLS) com os dois como `None` não-definido, em vez da string explícita `"none"` que o yt-dlp usa pra uma faixa genuinamente só-vídeo/só-áudio; o filtro tratava "não informado" igual a "confirmadamente ausente" e acabava excluindo todo formato do XVideos. O download em si não era afetado (uma chamada separada do yt-dlp, sem esse filtro)
 - Erro de permissão do *control socket* do Gunicorn 26 (`--no-control-socket`)
 - Download travado ao clicar "Baixar" durante o carregamento automático de mais vídeos (worker `sync` do Gunicorn → `gthread` + 4 threads)
 - Vazamento de ~1-1.5 GB de RAM por sessão do Chrome que trava sozinha (`_hard_kill_driver`)

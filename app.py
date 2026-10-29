@@ -2942,11 +2942,21 @@ def preview_video():
             info = ydl.extract_info(url, download=False)
             if not info:
                 return jsonify({"error": "Vídeo não encontrado"}), 404
-            # Best combined (video+audio in one stream) — browser plays without merging
+            # Best combined (video+audio in one stream) — browser plays without merging.
+            # "none" (the literal string) is yt-dlp's explicit "this track doesn't
+            # exist" marker for a video-only/audio-only format — exclude those. A
+            # missing/unset vcodec/acodec (Python None) just means the extractor
+            # didn't report it, not that the stream lacks that track: XVideos'
+            # extractor, for example, returns every format with both as None even
+            # though they're all normal combined mp4/HLS streams — treating that
+            # the same as explicit "none" wrongly filtered out every XVideos
+            # format, breaking the in-browser preview ("Play" doing nothing) for
+            # that site while download (a separate, unfiltered yt-dlp call) still
+            # worked fine.
             combined = [
                 f for f in info.get("formats", [])
-                if f.get("vcodec") not in ("none", None)
-                and f.get("acodec") not in ("none", None)
+                if f.get("vcodec") != "none"
+                and f.get("acodec") != "none"
                 and f.get("url")
             ]
             # Sort descending by height then bitrate → best quality first
@@ -2956,7 +2966,7 @@ def preview_video():
                 # No combined format — pick best video-only (browser may still play it)
                 combined = sorted(
                     [f for f in info.get("formats", [])
-                     if f.get("vcodec") not in ("none", None) and f.get("url")],
+                     if f.get("vcodec") != "none" and f.get("url")],
                     key=lambda f: (f.get("height") or 0, f.get("tbr") or 0),
                     reverse=True,
                 )
