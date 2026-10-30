@@ -1631,7 +1631,6 @@
       const [loadingMore, setLoadingMore] = useState(false);
       const [hasMore,     setHasMore]     = useState(false);
       const [searchId,    setSearchId]    = useState(null);
-      const [lastMoreDebug, setLastMoreDebug] = useState(null); // TEMPORARY — RedTube "carregar mais" investigation
       const [selVideo,    setSelVideo]    = useState(null);
       const [showModal,   setShowModal]   = useState(false);
       const [err,         setErr]         = useState("");
@@ -2022,21 +2021,17 @@
       }
 
       async function loadMore(){
-        if(!searchId||loadingMore){
-          setLastMoreDebug({skipped:true,searchId:String(searchId),loadingMore,at:new Date().toLocaleTimeString()});
-          return;
-        }
+        if(!searchId||loadingMore) return;
         setLoadingMore(true); setErr("");
         try{
           const r=await fetch(API+"/search/more",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({search_id:searchId,count})});
           const d=await r.json();
-          setLastMoreDebug({httpStatus:r.status,count:d.count,resultsLen:(d.results||[]).length,hasMore:d.has_more,error:d.error||null,server:d._debug||null,at:new Date().toLocaleTimeString()});
           if(d.error){ setErr(d.error); setHasMore(false); }
           else{
             setResults(prev=>[...prev,...(d.results||[])]);
             setHasMore(!!d.has_more);
           }
-        }catch(e){ setErr("Erro de conexão."); setLastMoreDebug({threw:true,message:String(e),at:new Date().toLocaleTimeString()}); }
+        }catch{ setErr("Erro de conexão."); }
         setLoadingMore(false);
       }
 
@@ -2739,20 +2734,11 @@
                 </div>
 
                 {(hasMore||loadingMore)&&(
-                  <div style={{display:"flex",flexDirection:"column",alignItems:"center",marginTop:24,gap:6}}>
+                  <div style={{display:"flex",justifyContent:"center",marginTop:24}}>
                     <button onClick={loadMore} disabled={loadingMore}
                       style={{padding:"11px 36px",borderRadius:9999,border:"1px solid #1d9bf0",background:loadingMore?"var(--bg-input)":"transparent",color:"#1d9bf0",fontSize:14,fontWeight:700,cursor:loadingMore?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:10,transition:"all .2s",opacity:loadingMore?.6:1}}>
                       {loadingMore?<><Spin size={16} color="#1d9bf0"/>Carregando mais…</>:"⬇ Carregar próximos "+count+" vídeos"}
                     </button>
-                    {/* TEMPORARY DEBUG — remove once the RedTube "carregar mais"
-                        investigation is resolved. The button itself gives no
-                        feedback when it's a silent no-op (loadMore()'s early
-                        `!searchId` guard), so this surfaces the exact state at
-                        the moment the button is visible/clicked. */}
-                    <div style={{fontSize:9,fontFamily:"monospace",color:"#ffd400",opacity:.85,textAlign:"center"}}>
-                      DEBUG platform={platform} searchId={String(searchId)} hasMore={String(hasMore)} loadingMore={String(loadingMore)} err={String(err)}<br/>
-                      lastClick={lastMoreDebug?JSON.stringify(lastMoreDebug):"(nunca clicado)"}
-                    </div>
                   </div>
                 )}
                 {!hasMore&&results.length>0&&!loadingMore&&(
