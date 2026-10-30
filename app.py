@@ -2023,10 +2023,17 @@ def _extract_video_thumbnail(art, By):
       3. Any img inside the video-player container.
       4. Any pbs.twimg.com img whose src does NOT contain "profile_images".
     """
-    # 1. video poster attribute (most accurate — the frame X chose as preview)
+    # 1. video poster attribute (most accurate — the frame X chose as preview).
+    # Was missing animatedMediaPlayer (GIF-type tweets) — those also render a
+    # real <video poster> under that testid, not videoPlayer/videoComponent,
+    # so a GIF tweet always skipped this most-reliable tier and fell through
+    # to the img-keyword tiers below, which often don't match a GIF's preview
+    # image either, landing on "" (no thumbnail) more often than for a
+    # regular video tweet.
     try:
         v = art.find_element(By.CSS_SELECTOR,
-            '[data-testid="videoPlayer"] video, [data-testid="videoComponent"] video')
+            '[data-testid="videoPlayer"] video, [data-testid="videoComponent"] video, '
+            '[data-testid="animatedMediaPlayer"] video')
         poster = v.get_attribute("poster") or ""
         if poster:
             return poster
