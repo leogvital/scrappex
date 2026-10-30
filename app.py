@@ -701,7 +701,7 @@ def _parse_tweet_object(tweet_raw, users_map=None):
         "uploader": user.get("name", screen_name),
         "uploader_id": screen_name,
         "duration": int(duration),
-        "thumbnail": thumbnail,
+        "thumbnail": _tw_thumb_url(thumbnail),
         "view_count": tweet_raw.get("view_count", 0),
         "like_count": tweet_raw.get("favorite_count", 0),
         "hashtags": hashtags,
@@ -1493,6 +1493,24 @@ def _rt_thumb_url(raw):
     return raw
 
 
+def _tw_thumb_url(raw):
+    """X video thumbnails (pbs.twimg.com) are publicly fetchable — confirmed
+    with a direct server-side request returning 200 with no auth/Referer
+    needed — so unlike RedTube this isn't a CDN hotlink block. But users
+    report many thumbnails never rendering client-side (broken <img>, no
+    network error visible to us) while the exact same URL loads fine when we
+    fetch it ourselves. The common factor across the broken reports: the
+    feed is NSFW/adult video content, and twimg.com is a frequent target of
+    mobile-carrier/DNS/ad-blocker content filtering that a user wouldn't
+    necessarily notice is active. Routing the bytes through our own domain
+    sidesteps that without needing to know which layer is actually blocking
+    it on the client's end."""
+    if raw and "twimg.com" in raw:
+        import urllib.parse
+        return "/api/thumb-proxy?url=" + urllib.parse.quote(raw, safe="")
+    return raw
+
+
 @app.route("/api/thumb-proxy")
 def thumb_proxy():
     import requests
@@ -1503,11 +1521,15 @@ def thumb_proxy():
     host = urlparse(url).hostname or ""
     # Allowlist by suffix, not prefix/substring — prevents someone passing an
     # arbitrary URL (SSRF) through this endpoint by crafting a hostname that
-    # merely contains "rdtcdn.com" somewhere.
-    if not url.startswith("https://") or not host.endswith(".rdtcdn.com"):
+    # merely contains one of these strings somewhere.
+    allowed = host.endswith(".rdtcdn.com") or host == "twimg.com" or host.endswith(".twimg.com")
+    if not url.startswith("https://") or not allowed:
         return jsonify({"error": "Host não permitido"}), 400
+    headers = dict(_SITE_HEADERS)
+    if host.endswith(".rdtcdn.com"):
+        headers["Referer"] = "https://www.redtube.com/"
     try:
-        r = requests.get(url, headers={**_SITE_HEADERS, "Referer": "https://www.redtube.com/"}, timeout=15)
+        r = requests.get(url, headers=headers, timeout=15)
         r.raise_for_status()
     except Exception as ex:
         return jsonify({"error": str(ex)}), 502
@@ -2171,7 +2193,7 @@ def _ss_parse(driver, seen_ids, results, page_size, need_video_check, duration_f
             except Exception:
                 pass
 
-            thumbnail = _extract_video_thumbnail(art, By)
+            thumbnail = _tw_thumb_url(_extract_video_thumbnail(art, By))
             duration  = _extract_video_duration(art, By)
 
             # Duration filter — only skip when duration is known (>0);

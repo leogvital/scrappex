@@ -413,18 +413,6 @@
                       style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",
                               filter:hov?"brightness(.65)":"brightness(.8)",transition:"filter .2s"}}/>
                   : <div style={{position:"absolute",inset:0,background:"var(--bg-placeholder)"}}/>}
-                {/* TEMPORARY DEBUG — remove once the X-thumbnail investigation is
-                    resolved. Shows exactly what the backend sent in `thumbnail`
-                    (or that onError fired on a URL that *was* present), since a
-                    blank placeholder looks identical for "field came back empty"
-                    and "field had a URL but the browser couldn't load it" — no
-                    way to tell which from the screenshot alone otherwise. */}
-                {!hasVideo&&(
-                  <div style={{position:"absolute",top:2,left:2,right:2,fontSize:8,lineHeight:1.3,color:"#ffd400",
-                    background:"rgba(0,0,0,.75)",padding:"2px 4px",borderRadius:3,wordBreak:"break-all",zIndex:5,fontFamily:"monospace"}}>
-                    DEBUG thumb={video.thumbnail?`"${video.thumbnail.slice(0,60)}"`:"EMPTY"} err={String(thumbErr)}
-                  </div>
-                )}
 
                 {/* Play button / spinner / error always centered */}
                 <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
