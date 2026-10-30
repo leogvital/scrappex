@@ -820,6 +820,8 @@ def _new_site_ss():
         "page": 1, "sort": "relevance", "duration": "any", "category": "straight",
         "seen_ids": set(),   # dedup across pages — some sites (e.g. Pornhub category
                              # browsing) repeat a handful of promoted items per page
+        "empty_streak": 0,   # consecutive pages that scraped fine but had 0 new
+                             # ids after dedup — see has_more logic in /api/search/more
         "finished": False, "last_used": 0,
     }
 
@@ -2803,7 +2805,7 @@ def search():
             "id": sid, "site": platform, "query": q,
             "page": first_page + 1,   # next page to fetch
             "sort": sort, "duration": duration, "category": category,
-            "seen_ids": set(), "finished": False, "last_used": time.time(),
+            "seen_ids": set(), "empty_streak": 0, "finished": False, "last_used": time.time(),
         })
         results, raw_count, err = search_site_page(platform, q, page=first_page, sort=sort, duration=duration, category=category)
         if not q:
@@ -3115,16 +3117,22 @@ def search_more():
         # promoted items across consecutive pages.
         results = [r for r in results if r["id"] not in ss["seen_ids"] and not ss["seen_ids"].add(r["id"])]
         # A page that scraped fine (raw_count >= 10) but came back 100% already-seen
-        # after dedup means the site itself ran out of real results and started
-        # repeating/falling back (confirmed on RedTube: a query with few genuine
-        # matches starts returning page 1's exact content again once you page past
-        # the real end, instead of an empty page or a 404). Trusting raw page size
-        # alone for `has_more` in that case left it `true` forever — and since the
-        # infinite-scroll effect re-fires the instant it's reattached whenever the
-        # grid is still "near the bottom" (trivially true when 0 new cards just
-        # got added, so the page never grows), that turned into a silent, rapid
-        # loop burning through page numbers with the user seeing nothing load.
+        # after dedup is unusual — deep manual paging through RedTube's own site
+        # confirmed genuinely fresh content past page 25 for a query that triggered
+        # this, so a single all-duplicate page is more likely a transient hiccup
+        # (e.g. a stale/cached response under bursty request timing) than the site
+        # actually running out of results. But trusting raw page size alone for
+        # `has_more` forever is also wrong: combined with the infinite-scroll effect
+        # re-firing the instant it's reattached whenever the grid is still "near the
+        # bottom" (trivially true when 0 new cards just got added), one transient
+        # hiccup turned into a silent, rapid loop burning through page numbers with
+        # the user seeing nothing load. Splitting the difference: only give up after
+        # a few *consecutive* all-duplicate pages, not the first one.
         if raw_count > 0 and not results:
+            ss["empty_streak"] += 1
+        else:
+            ss["empty_streak"] = 0
+        if ss["empty_streak"] >= 3:
             ss["finished"] = True
             has_more = False
         return jsonify({

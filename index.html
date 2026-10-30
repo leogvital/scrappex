@@ -1918,11 +1918,23 @@
         if (platform !== "x" && type === "home") search();
       }, [type, platform, xfCategory, phCategory, xnCategory, xnSort, xnDuration, tfCategory, tfSort, tfDuration, rtCategory, rtSort, rtDuration, siteCategory]); // eslint-disable-line
 
-      // Auto-scroll infinito: carrega mais ao chegar perto do fim da página
+      // Auto-scroll infinito: carrega mais ao chegar perto do fim da página.
+      // `lastAutoLoadRef` enforces a minimum gap between auto-triggered loads —
+      // without it, a page whose grid doesn't grow (e.g. a site-side response
+      // that came back fully duplicate after dedup) stays "near the bottom"
+      // the instant the listener reattaches post-fetch, firing again
+      // immediately and burning through page numbers in a rapid, invisible
+      // loop (root cause of a RedTube "carregar mais parece não fazer nada"
+      // report — traced via debug instrumentation to 6 auto-fired calls
+      // completing before the user could even see the first one happen).
+      const lastAutoLoadRef = useRef(0);
       useEffect(()=>{
         if (!hasMore || loadingMore || searching) return;
         function onScroll() {
           if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 700) {
+            const now = Date.now();
+            if (now - lastAutoLoadRef.current < 1200) return;
+            lastAutoLoadRef.current = now;
             loadMore();
           }
         }
