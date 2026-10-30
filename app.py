@@ -2010,6 +2010,27 @@ def _canonical_tweet_url(art, By):
     return None, None, None
 
 
+def _img_url(el):
+    """An X preview <img> isn't always eagerly loaded — `src` can be a blank
+    placeholder with the real URL sitting in a lazy-load attribute instead
+    (confirmed as a real, recurring cause of blank thumbnails: `src` present
+    but pointing at a 1x1/data: placeholder while `data-src`/the first
+    `srcset` candidate already held the actual image). Checked in the order
+    a real browser would resolve them — explicit lazy-load attrs first, then
+    the standard ones."""
+    for attr in ("data-src", "data-image-url"):
+        v = el.get_attribute(attr) or ""
+        if v:
+            return v
+    srcset = el.get_attribute("srcset") or ""
+    if srcset:
+        # "url1 1x, url2 2x" → take the first candidate's URL
+        first = srcset.split(",")[0].strip().split(" ")[0]
+        if first:
+            return first
+    return el.get_attribute("src") or ""
+
+
 def _extract_video_thumbnail(art, By):
     """
     Return the video thumbnail URL from a tweet article element.
@@ -2018,18 +2039,32 @@ def _extract_video_thumbnail(art, By):
     so a naive img[src*="pbs.twimg.com"] selector always grabs the avatar.
 
     Strategy (in order of reliability):
-      1. <video poster="…"> inside the video player — the actual video frame.
-      2. Any img whose src contains a video-thumbnail path keyword.
+      0. Any <video poster="…"> anywhere in the article — the actual video
+         frame X chose, independent of which specific data-testid container
+         wraps it (X's own container naming has already changed once under
+         us — animatedMediaPlayer for GIFs was missing from an earlier,
+         testid-scoped version of this tier — so this version doesn't bet on
+         enumerating every current container name).
+      1. <video poster="…"> inside a specifically-named video container, as
+         a narrower fallback in case tier 0's broader scan misses a variant.
+      2. Any img whose src/lazy-load attr contains a video-thumbnail path
+         keyword.
       3. Any img inside the video-player container.
-      4. Any pbs.twimg.com img whose src does NOT contain "profile_images".
+      4. Any pbs.twimg.com img whose URL does NOT contain "profile_images".
     """
-    # 1. video poster attribute (most accurate — the frame X chose as preview).
-    # Was missing animatedMediaPlayer (GIF-type tweets) — those also render a
-    # real <video poster> under that testid, not videoPlayer/videoComponent,
-    # so a GIF tweet always skipped this most-reliable tier and fell through
-    # to the img-keyword tiers below, which often don't match a GIF's preview
-    # image either, landing on "" (no thumbnail) more often than for a
-    # regular video tweet.
+    # 0. any <video poster> at all, anywhere in the article
+    try:
+        for v in art.find_elements(By.CSS_SELECTOR, "video"):
+            poster = v.get_attribute("poster") or ""
+            if poster:
+                return poster
+    except Exception:
+        pass
+
+    # 1. same idea, narrowed to the known video-container testids (kept as a
+    # second attempt in case tier 0's plain "video" selector somehow misses
+    # one X renders differently, e.g. inside a shadow root or iframe tier 0
+    # can't see into but a more specific descendant combinator can)
     try:
         v = art.find_element(By.CSS_SELECTOR,
             '[data-testid="videoPlayer"] video, [data-testid="videoComponent"] video, '
@@ -2040,34 +2075,35 @@ def _extract_video_thumbnail(art, By):
     except Exception:
         pass
 
-    # 2. img with video-thumbnail path in src
+    # 2. img with video-thumbnail path in its (possibly lazy-loaded) URL
     for kw in ("ext_tw_video_thumb", "tweet_video_thumb",
                 "amplify_video_thumb", "card_img", "media_thumbnail"):
-        try:
-            src = art.find_element(
-                By.CSS_SELECTOR, f'img[src*="{kw}"]'
-            ).get_attribute("src") or ""
-            if src:
-                return src
-        except Exception:
-            pass
+        for sel in (f'img[src*="{kw}"]', f'img[data-src*="{kw}"]'):
+            try:
+                el = art.find_element(By.CSS_SELECTOR, sel)
+                url = _img_url(el)
+                if url:
+                    return url
+            except Exception:
+                pass
 
     # 3. any img inside the video player container
     for sel in ('[data-testid="videoPlayer"] img',
                 '[data-testid="videoComponent"] img',
                 '[data-testid="animatedMediaPlayer"] img'):
         try:
-            src = art.find_element(By.CSS_SELECTOR, sel).get_attribute("src") or ""
-            if src:
-                return src
+            el = art.find_element(By.CSS_SELECTOR, sel)
+            url = _img_url(el)
+            if url:
+                return url
         except Exception:
             pass
 
     # 4. fallback: first pbs.twimg.com img that is NOT a profile picture
-    for img in art.find_elements(By.CSS_SELECTOR, 'img[src*="pbs.twimg.com"]'):
-        src = img.get_attribute("src") or ""
-        if src and "profile_images" not in src:
-            return src
+    for img in art.find_elements(By.CSS_SELECTOR, 'img[src*="pbs.twimg.com"], img[data-src*="pbs.twimg.com"]'):
+        url = _img_url(img)
+        if url and "profile_images" not in url:
+            return url
 
     return ""
 
