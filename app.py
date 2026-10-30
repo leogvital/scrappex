@@ -3098,6 +3098,8 @@ def search_more():
         if ss["finished"]:
             return jsonify({"results": [], "has_more": False, "search_id": sid})
         cur_page = ss["page"]
+        seen_before = len(ss["seen_ids"])  # TEMPORARY — RedTube "carregar mais" debug
+        raw_ids_before_dedup = None
         results, raw_count, err = search_site_page(
             ss["site"], ss["query"],
             page=cur_page,
@@ -3105,6 +3107,8 @@ def search_more():
             duration=ss.get("duration", "any"),
             category=ss.get("category", "straight"),
         )
+        if ss["site"] == "redtube":
+            raw_ids_before_dedup = [r["id"] for r in results][:8]  # TEMPORARY — RedTube debug, truncated to fit on screen
         ss["page"]      = cur_page + 1
         ss["last_used"] = time.time()
         has_more = raw_count >= 10   # if site returned content, assume more pages exist
@@ -3114,10 +3118,18 @@ def search_more():
         # Dedup — some sites (e.g. Pornhub category browsing) repeat a handful of
         # promoted items across consecutive pages.
         results = [r for r in results if r["id"] not in ss["seen_ids"] and not ss["seen_ids"].add(r["id"])]
-        return jsonify({
+        resp = {
             "results": _mark_downloaded(results), "count": len(results),
             "has_more": has_more, "search_id": sid,
-        })
+        }
+        if ss["site"] == "redtube":
+            # TEMPORARY — remove once the "carregar mais" investigation is resolved.
+            resp["_debug"] = {
+                "cur_page": cur_page, "raw_count": raw_count, "err": err,
+                "seen_before": seen_before, "seen_after": len(ss["seen_ids"]),
+                "raw_ids_before_dedup": raw_ids_before_dedup,
+            }
+        return jsonify(resp)
 
     # ── X session (Selenium) ──────────────────────────────────────────────────
     if (not _SS["driver"]

@@ -2030,7 +2030,7 @@
         try{
           const r=await fetch(API+"/search/more",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({search_id:searchId,count})});
           const d=await r.json();
-          setLastMoreDebug({httpStatus:r.status,count:d.count,resultsLen:(d.results||[]).length,hasMore:d.has_more,error:d.error||null,at:new Date().toLocaleTimeString()});
+          setLastMoreDebug({httpStatus:r.status,count:d.count,resultsLen:(d.results||[]).length,hasMore:d.has_more,error:d.error||null,server:d._debug||null,at:new Date().toLocaleTimeString()});
           if(d.error){ setErr(d.error); setHasMore(false); }
           else{
             setResults(prev=>[...prev,...(d.results||[])]);
