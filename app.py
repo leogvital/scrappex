@@ -2150,17 +2150,19 @@ def _extract_video_duration(art, By):
     """
     Return the video duration (seconds) from the small "M:SS" badge X overlays
     on video thumbnails, or 0 if not found / not a timed video.
+
+    Scans every <span> in the whole article rather than only inside specific
+    `data-testid` containers — the same narrowing mistake that originally
+    broke thumbnail extraction (fixed by widening to "any <video poster> in
+    the article" instead of enumerating container names one at a time).
+    `_DURATION_TEXT_RE` is anchored (`^...$`) against the *entire* span text,
+    so this can't false-positive on view/like counts or dates — those never
+    render as a bare "M:SS" string.
     """
-    for sel in ('[data-testid="videoPlayer"]', '[data-testid="videoComponent"]',
-                '[data-testid="animatedMediaPlayer"]'):
-        try:
-            container = art.find_element(By.CSS_SELECTOR, sel)
-        except Exception:
-            continue
-        for el in container.find_elements(By.CSS_SELECTOR, "span"):
-            sec = _parse_duration_str(el.text or "")
-            if sec:
-                return sec
+    for el in art.find_elements(By.CSS_SELECTOR, "span"):
+        sec = _parse_duration_str(el.text or "")
+        if sec:
+            return sec
     return 0
 
 
