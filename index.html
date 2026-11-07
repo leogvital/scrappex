@@ -445,6 +445,17 @@
                     {fmt(video.duration)}
                   </div>
                 )}
+                {/* TEMPORARY DEBUG — remove once the X duration investigation is
+                    resolved. video.hashtags!==undefined marks an X card. Shows
+                    the raw duration value even when it's 0, since the real
+                    badge above is hidden in that case and we need to know
+                    whether the backend is returning 0 or something non-zero
+                    that just isn't rendering. */}
+                {video.hashtags!==undefined&&(
+                  <div style={{position:"absolute",top:2,left:2,fontSize:8,fontFamily:"monospace",color:"#ffd400",background:"rgba(0,0,0,.75)",padding:"1px 4px",borderRadius:3,zIndex:5}}>
+                    dur={String(video.duration)}
+                  </div>
+                )}
 
                 {/* Platform badge — only set when results come from "buscar em tudo" */}
                 {video._platform&&(
