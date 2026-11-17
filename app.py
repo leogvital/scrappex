@@ -1180,7 +1180,11 @@ def _scrape_pornhub(query, page=1, category="straight"):
             or re.search(r'data-mediumthumb="([^"]+)"', block)
             or re.search(r'<img[^>]+src="([^"]+)"', block)
         )
-        dur_m   = re.search(r'<var class="duration">([^<]+)</var>', block)
+        # Class is an exact "duration" on plain search-result cards, but
+        # "bgShadeEffect duration tooltipTrig" on the premium/suggested cards
+        # mixed into results — matching on \bduration\b inside the class
+        # value (not just an exact match) catches both templates.
+        dur_m   = re.search(r'<var class="[^"]*\bduration\b[^"]*"[^>]*>([^<]+)</var>', block)
         views_m = re.search(r'class="views"[^>]*>\s*<var>([^<]+)</var>', block)
         user_m  = re.search(r'class="usernameLink">([^<]+)</a>', block)
 
