@@ -256,6 +256,7 @@ Direct HTML page scraping, no headless browser (`_scrape_pornhub`). Two tabs —
 - Pagination via `?page=N`, the same for every category and for Home/Search.
 - **Cross-page dedup**: Pornhub's category pagination repeats a few promoted items across consecutive pages (confirmed directly over HTTP, outside the app). Because of this, `_SITE_SS` (also used by XHamster/XVideos) gained a `seen_ids` set that filters out already-seen IDs before returning each page.
 - **Thumbnail**: Home/trending cards use a different attribute (`data-mediumthumb`) than search cards (`data-image`) — `_scrape_pornhub` tries both before falling back to the `<img>`'s plain `src`, otherwise several previews would show up blank on Home.
+- **Duration showing as 0 for some cards**: the premium/suggested cards mixed into search results use `<var class="bgShadeEffect duration tooltipTrig">` instead of the plain search cards' `<var class="duration">` — the regex required an exact class match, so those specific cards silently got `duration=0` (hiding the duration badge entirely, since it's conditional on `duration > 0`). Fixed by matching `\bduration\b` anywhere inside the class value instead of an exact match, so both templates resolve correctly.
 
 ### XNXX (www.xnxx.com) — via HTTP
 Direct HTML page scraping, no headless browser (`_scrape_xnxx`). Two tabs — Home and Search — plus a category, all funneled through the same `/search/...` path (unlike Pornhub's per-orientation subdomains/paths):

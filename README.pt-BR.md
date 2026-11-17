@@ -256,6 +256,7 @@ Scraping direto da página HTML, sem navegador headless (`_scrape_pornhub`). Dua
 - Paginação via `?page=N`, igual para todas as categorias e para Home/Busca.
 - **Dedup entre páginas**: a paginação por categoria do Pornhub repete alguns itens promovidos entre páginas consecutivas (confirmado direto via HTTP, fora do app). Por isso `_SITE_SS` (usado também por XHamster/XVideos) ganhou um `seen_ids` que filtra IDs já vistos antes de devolver cada página.
 - **Thumbnail**: os cards da Home/trending usam um atributo diferente (`data-mediumthumb`) dos cards de busca (`data-image`) — `_scrape_pornhub` tenta os dois antes de cair para o `src` puro da `<img>`, senão vários previews ficavam em branco na Home.
+- **Duração aparecendo como 0 em alguns cards**: os cards premium/sugeridos misturados nos resultados de busca usam `<var class="bgShadeEffect duration tooltipTrig">` em vez do `<var class="duration">` dos cards de busca normais — a regex exigia a classe exata, então esses cards específicos recebiam `duration=0` em silêncio (escondendo o badge de duração inteiro, já que ele só aparece quando `duration > 0`). Corrigido casando `\bduration\b` em qualquer lugar dentro do valor da classe, em vez de exigir correspondência exata, então os dois templates resolvem corretamente.
 
 ### XNXX (www.xnxx.com) — via HTTP
 Scraping direto da página HTML, sem navegador headless (`_scrape_xnxx`). Duas abas — Home e Busca — mais categoria, tudo passando pelo mesmo caminho `/search/...` (diferente do Pornhub, que usa subdomínios/caminhos por orientação):
