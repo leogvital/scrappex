@@ -2,7 +2,7 @@
 
 *[Leia em português](README.pt-BR.md)*
 
-Local web application to search and download videos from **X (Twitter)**, **XHamster**, **XVideos**, **xFree**, **Pornhub**, **XNXX**, **TNAFlix**, **RedTube**, **YouPorn**, **Tube8**, **Thumbzilla**, **Eporner** and **YouJizz**.
+Local web application to search and download videos from **X (Twitter)**, **XHamster**, **XVideos**, **xFree**, **Pornhub**, **XNXX**, **TNAFlix**, **RedTube**, **YouPorn**, **Tube8**, **Thumbzilla**, **Eporner**, **YouJizz**, **Nuvid** and **HellPorno**.
 
 > See [ROADMAP.md](ROADMAP.md) for what's already done and what's planned next.
 
@@ -349,6 +349,25 @@ Direct HTML page scraping, no headless browser (`_scrape_youjizz`). Two tabs —
 - **Thumbnail is protocol-relative** (`//cdne-pics.youjizz.com/...`, no explicit `https:`) — `_scrape_youjizz` prepends it, otherwise the browser would resolve it against whatever scheme the page itself loaded under.
 - **Search URL is path-based with the page number baked in**: `/search/<query>-<page>.html` (1-based) — confirmed via the site's own pagination links rather than guessed.
 - **"Carregar mais" could get stuck in a silent runaway loop**: a user report ("primeira busca funciona, carregar mais não") traced through several rounds of debug instrumentation (client and server-side, since isolated backend tests of the exact same query/category/duration kept paginating correctly and couldn't reproduce it) down to `has_more` being computed purely from raw scraped page size (`raw_count >= 10`), with no check for what actually survived the `seen_ids` dedup. Server-side debug data from the user's own session showed a single test run reaching page 7 with content byte-identical to page 1, with `has_more` staying `true` regardless. Combined with the infinite-scroll effect, which re-fires the instant it's reattached whenever the grid is still "near the bottom" (trivially true once a page adds 0 new cards, since the page never grows), this turned into a fast, invisible loop silently burning through page numbers before the user could see anything happen — a debug trace caught 6 auto-fired calls completing faster than the user could react to the first one. The first fix treated any single all-duplicate page as "the site ran out of real results" and permanently stopped offering more — but a direct 25-page scrape (and the user confirming, on RedTube's own site, that paging "solo" by hand keeps showing different videos) found genuinely fresh content well past that point, so the page-7 duplicate was a transient hiccup, not an actual end-of-results. Settled on two changes together: `_SITE_SS` now tracks `empty_streak` (consecutive all-duplicate-after-dedup pages) and only gives up after 3 in a row, tolerating an isolated blip while still protecting against a genuinely-stuck site; and the infinite-scroll effect enforces a 1.2s minimum gap between auto-triggered loads, which is also what most plausibly caused the original hiccup (RedTube's cache/anti-bot layer reacting to an unthrottled burst of requests). The `empty_streak` guard applies to every site sharing that `/api/search/more` code path (XHamster/XVideos/Pornhub/XNXX/TNAFlix), not just RedTube.
+
+### Nuvid (www.nuvid.com) — via HTTP
+Direct HTML page scraping, no headless browser (`_scrape_nuvid`). Two tabs — Home and Search.
+
+- **No category support**: no navigable gay/trans path was found from the site's own nav — documented as a limitation rather than guessed at.
+- **Domain mismatch with yt-dlp**: the site 301-redirects `www.nuvid.com` to `www.nuvid.club`, and that's what's actually scraped from — but yt-dlp's `NuvidIE` only matches the literal `nuvid.com` domain. The stored `url` is rewritten to `nuvid.com` before being returned (confirmed yt-dlp still extracts fine hitting that host directly, the redirect notwithstanding — it just can't follow a browser-style redirect to recognize `.club` on its own).
+- **Card selector**: `<div class="box-tumb related_vid">`.
+- **Home doesn't paginate**: `?page=N` returns the exact same set regardless of N (confirmed against the live site) — same shape of limitation as XVideos' Home. Search paginates normally.
+
+### HellPorno (hellporno.com) — via HTTP
+Direct HTML page scraping, no headless browser (`_scrape_hellporno`). Two tabs — Home and Search.
+
+- **No category support**: no navigable gay/trans path was found either.
+- **Card selector**: `<div class="video-thumb">`.
+- **Search doesn't paginate at all**: `/search/N/?q=...` returns identical content for every N — confirmed this isn't a caching artifact (no CDN cache headers present on the response; a cache-busting query param made no difference either). Home browsing, however, paginates correctly (confirmed only 7 of 60 ids shared between page 1 and page 2) — so only Search is restricted to its first page.
+- **Home cards carry extra tracking attributes that broke a too-strict regex**: Home's `<a class="title" data-rt="..." onClick="...">` has extra attributes between `class="title"` and the closing `>` that search-result cards' plain `<a class="title">` don't — a regex requiring the `>` immediately after `class="title"` matched Search fine but silently found 0 cards on Home. Same mistake, same fix, as the Eporner/Pornhub `loading="lazy"`/class-ordering issues earlier in this doc: match up to the next `>` instead of requiring strict adjacency.
+
+### A cross-search race in shared session state (found while testing Nuvid's "carregar mais" through the real UI, not just backend calls)
+Clicking a platform's tab auto-fires a background Home search (the existing auto-search-on-Home-tab effect), and `_SITE_SS[platform]` is a single dict shared across every request for that platform with no generation guard. If a user switches to Search and submits a real query before that auto-fired Home search's background thread finishes, the slower Home search's later writes (`page`/`seen_ids`/`finished`) can land *after* the real search already completed and returned results — silently corrupting its session state with no error anywhere. Root-caused by capturing every `/api/search*` request and response during a scripted UI interaction and finding two overlapping `/api/search/start` calls where the slower one mutated shared state after the faster one's response had already gone out. Fixed generically (not just for Nuvid) in `search()`'s external-sites branch: after the scrape call returns, if `ss["id"]` no longer matches this request's own `sid`, a newer search has since reset the session — the results already fetched are still returned to this specific caller (harmless), but none of the follow-up mutations run, since they'd only stomp a newer search's state with stale data.
 
 ---
 
