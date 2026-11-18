@@ -97,7 +97,7 @@
 
     // Shared platform label map — used by VideoCard's badge in "buscar em
     // tudo" results and by the search-history labels inside App.
-    const PLATFORM_LABEL = {x:"𝕏",xhamster:"xHamster",xvideos:"XVideos",xfree:"xFree",pornhub:"Pornhub",xnxx:"XNXX",tnaflix:"TNAFlix",redtube:"RedTube",all:"🌐 Tudo"};
+    const PLATFORM_LABEL = {x:"𝕏",xhamster:"xHamster",xvideos:"XVideos",xfree:"xFree",pornhub:"Pornhub",xnxx:"XNXX",tnaflix:"TNAFlix",redtube:"RedTube",youporn:"YouPorn",tube8:"Tube8",thumbzilla:"Thumbzilla",eporner:"Eporner",youjizz:"YouJizz",all:"🌐 Tudo"};
 
     const Spin = ({size=20,color="#1d9bf0"}) => (
       <div style={{width:size,height:size,border:"2px solid rgba(255,255,255,0.12)",borderTopColor:color,borderRadius:"50%",animation:"spin .7s linear infinite",flexShrink:0}}/>
@@ -1671,6 +1671,14 @@
       // only when rtCategory === "straight".
       const [rtSort,      setRtSort]      = useState("relevance"); // relevance | newest | top | views | longest
       const [rtDuration,  setRtDuration]  = useState("any");       // any | short | medium | long
+      // YouPorn/Tube8/Thumbzilla: same Aylo-network template, only straight/gay
+      // confirmed against the live sites (no sort/duration params, same as Pornhub).
+      const [ypCategory,  setYpCategory]  = useState("straight"); // YouPorn: straight | gay
+      const [t8Category,  setT8Category]  = useState("straight"); // Tube8: straight | gay
+      const [tzCategory,  setTzCategory]  = useState("straight"); // Thumbzilla: straight | gay
+      const [epCategory,  setEpCategory]  = useState("straight"); // Eporner: straight | gay | sapphic | trans
+      // YouJizz: no category support — its Gay/Trans filters are cookie-based
+      // (/setFilter?filter=...), not a navigable URL, so there's no selector.
       const [checked,     setChecked]     = useState(new Set()); // multi-select IDs
       const [bulkFmt,     setBulkFmt]     = useState("best");
       const [bulkTasks,   setBulkTasks]   = useState(null);    // null | task array
@@ -1776,6 +1784,10 @@
         if (h.platform==="xnxx")    setXnCategory(h.category||"straight");
         if (h.platform==="tnaflix") setTfCategory(h.category||"straight");
         if (h.platform==="redtube") setRtCategory(h.category||"straight");
+        if (h.platform==="youporn") setYpCategory(h.category||"straight");
+        if (h.platform==="tube8") setT8Category(h.category||"straight");
+        if (h.platform==="thumbzilla") setTzCategory(h.category||"straight");
+        if (h.platform==="eporner") setEpCategory(h.category||"straight");
         if (h.platform==="xhamster"||h.platform==="xvideos") setSiteCategory(h.category||"straight");
         search({platform:h.platform, type:h.type, query:h.query||"", category:h.category});
       }
@@ -1927,7 +1939,7 @@
         if (firstRenderRef.current) { firstRenderRef.current = false; return; }
         if (platform === "x" && (type === "home" || type === "following")) search();
         if (platform !== "x" && type === "home") search();
-      }, [type, platform, xfCategory, phCategory, xnCategory, xnSort, xnDuration, tfCategory, tfSort, tfDuration, rtCategory, rtSort, rtDuration, siteCategory]); // eslint-disable-line
+      }, [type, platform, xfCategory, phCategory, xnCategory, xnSort, xnDuration, tfCategory, tfSort, tfDuration, rtCategory, rtSort, rtDuration, siteCategory, ypCategory, t8Category, tzCategory, epCategory]); // eslint-disable-line
 
       // Auto-scroll infinito: carrega mais ao chegar perto do fim da página.
       // `lastAutoLoadRef` enforces a minimum gap between auto-triggered loads —
@@ -2014,10 +2026,16 @@
                          : ePlatform==="xnxx" ? xnCategory
                          : ePlatform==="tnaflix" ? tfCategory
                          : ePlatform==="redtube" ? rtCategory
+                         : ePlatform==="youporn" ? ypCategory
+                         : ePlatform==="tube8" ? t8Category
+                         : ePlatform==="thumbzilla" ? tzCategory
+                         : ePlatform==="eporner" ? epCategory
                          : (ePlatform==="xhamster"||ePlatform==="xvideos") ? siteCategory
                          : undefined;
-        const needQuery = ePlatform==="x"                                          ? (eType!=="home" && eType!=="following")
-                        : (ePlatform==="xfree"||ePlatform==="pornhub"||ePlatform==="xnxx"||ePlatform==="tnaflix"||ePlatform==="redtube"||ePlatform==="xhamster"||ePlatform==="xvideos") ? eType!=="home"
+        const _httpPlatforms = ["xfree","pornhub","xnxx","tnaflix","redtube","xhamster","xvideos",
+                                 "youporn","tube8","thumbzilla","eporner","youjizz"];
+        const needQuery = ePlatform==="x" ? (eType!=="home" && eType!=="following")
+                        : _httpPlatforms.includes(ePlatform) ? eType!=="home"
                         : true;
         if(needQuery&&!eQuery.trim()) return;
         setSearching(true); setErr(""); setResults([]); setHasMore(false); setSearchId(null); clearChecked();
@@ -2034,7 +2052,11 @@
                     ? {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,category:eCategory,sort:tfSort,duration:tfDuration,count}
                     : ePlatform==="redtube"
                       ? {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,category:eCategory,sort:rtSort,duration:rtDuration,count}
-                      : {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,sort:siteSort,duration:siteDuration,category:eCategory,count};
+                      : (ePlatform==="youporn"||ePlatform==="tube8"||ePlatform==="thumbzilla"||ePlatform==="eporner")
+                        ? {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,category:eCategory,count}
+                        : ePlatform==="youjizz"
+                          ? {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,count}
+                          : {query:(eType==="home"?"":eQuery.trim()),platform:ePlatform,type:eType,sort:siteSort,duration:siteDuration,category:eCategory,count};
           const r=await fetch(API+"/search/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
           const {task_id}=await r.json();
           const meta = {platform:ePlatform, type:eType, query:eQuery.trim(), category:eCategory};
@@ -2062,7 +2084,8 @@
       // a time. Sequential on purpose: xHamster/XVideos/Pornhub all share one
       // backend session slot (_SITE_SS), so firing them concurrently would
       // have one clobber another's in-progress pagination state.
-      const ALL_PLATFORMS = ["x","xhamster","xvideos","xfree","pornhub","xnxx","tnaflix","redtube"];
+      const ALL_PLATFORMS = ["x","xhamster","xvideos","xfree","pornhub","xnxx","tnaflix","redtube",
+                             "youporn","tube8","thumbzilla","eporner","youjizz"];
       const [searchAllMode, setSearchAllMode] = useState(false);
       const [allResults,    setAllResults]    = useState([]);
       const [searchingAll,  setSearchingAll]  = useState(false);
@@ -2125,7 +2148,8 @@
         setSearchingAll(true); setAllResults([]); setAllErr("");
         setAllSearchIds({}); setAllHasMore({}); setAllLoadingMore({}); setCheckedAll(new Set());
         try{
-          const body = {query:q, xfCategory, phCategory, xnCategory, tfCategory, rtCategory, siteCategory, count};
+          const body = {query:q, xfCategory, phCategory, xnCategory, tfCategory, rtCategory, siteCategory,
+                        ypCategory, t8Category, tzCategory, epCategory, count};
           const r = await fetch(API+"/search/start_all",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
           const {task_id} = await r.json();
           localStorage.setItem(SEARCH_ALL_TASK_KEY, JSON.stringify({taskId:task_id, query:q}));
@@ -2240,6 +2264,11 @@
                   {id:"xnxx",     label:"XNXX"},
                   {id:"tnaflix",  label:"TNAFlix"},
                   {id:"redtube",  label:"RedTube"},
+                  {id:"youporn",  label:"YouPorn"},
+                  {id:"tube8",    label:"Tube8"},
+                  {id:"thumbzilla", label:"Thumbzilla"},
+                  {id:"eporner",  label:"Eporner"},
+                  {id:"youjizz",  label:"YouJizz"},
                   {id:"all",      label:"🌐 Tudo"},
                 ].map(p=>{
                   const active = p.id==="all" ? searchAllMode : (!searchAllMode && platform===p.id);
@@ -2247,7 +2276,7 @@
                     <button key={p.id} onClick={()=>{
                         if(p.id==="all"){ setSearchAllMode(true); setAllErr(""); clearChecked(); return; }
                         setSearchAllMode(false);
-                        setPlatform(p.id);setResults([]);setErr("");setSearchId(null);setSiteSort("relevance");setSiteDuration("any");setXfCategory("straight");setPhCategory("straight");setSiteCategory("straight");setType("home");clearCheckedAll();
+                        setPlatform(p.id);setResults([]);setErr("");setSearchId(null);setSiteSort("relevance");setSiteDuration("any");setXfCategory("straight");setPhCategory("straight");setSiteCategory("straight");setYpCategory("straight");setT8Category("straight");setTzCategory("straight");setEpCategory("straight");setType("home");clearCheckedAll();
                       }}
                       style={{flex:1,minWidth:70,padding:"7px 4px",borderRadius:8,border:"none",
                         background:active?"rgba(29,155,240,.15)":"transparent",
@@ -2566,6 +2595,115 @@
                 </div>
               )}
 
+              {/* YouPorn/Tube8/Thumbzilla: mode tabs (Home / Busca) — same Aylo-network
+                  template, repeated per platform since each keeps its own
+                  category state (same pattern as XNXX/TNAFlix/RedTube above). */}
+              {(platform==="youporn"||platform==="tube8"||platform==="thumbzilla")&&(
+                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"var(--bg-input)",padding:4,borderRadius:10,border:"1px solid var(--border)"}}>
+                  {[{id:"home",label:"🏠 Home"},{id:"search",label:"🔍 Busca"}].map(t=>(
+                    <button key={t.id} onClick={()=>setType(t.id)}
+                      style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",
+                        background:type===t.id?"rgba(29,155,240,.15)":"transparent",
+                        color:type===t.id?"#1d9bf0":"var(--text-2)",fontSize:12,fontWeight:type===t.id?700:400,
+                        cursor:"pointer",transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* YouPorn/Tube8/Thumbzilla: category filter — só Heterossexual/Gay
+                  confirmados contra os sites ao vivo (Sáfica/Trans não testados,
+                  então não oferecidos em vez de prometer suporte incerto). */}
+              {platform==="youporn"&&(
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Categoria</label>
+                  <select value={ypCategory} onChange={e=>setYpCategory(e.target.value)}
+                    style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                      borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    <option value="straight">❤️ Heterossexual</option>
+                    <option value="gay">🏳️‍🌈 Gay</option>
+                  </select>
+                </div>
+              )}
+              {platform==="tube8"&&(
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Categoria</label>
+                  <select value={t8Category} onChange={e=>setT8Category(e.target.value)}
+                    style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                      borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    <option value="straight">❤️ Heterossexual</option>
+                    <option value="gay">🏳️‍🌈 Gay</option>
+                  </select>
+                </div>
+              )}
+              {platform==="thumbzilla"&&(
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Categoria</label>
+                  <select value={tzCategory} onChange={e=>setTzCategory(e.target.value)}
+                    style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                      borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    <option value="straight">❤️ Heterossexual</option>
+                    <option value="gay">🏳️‍🌈 Gay</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Eporner: mode tabs (Home / Busca) */}
+              {platform==="eporner"&&(
+                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"var(--bg-input)",padding:4,borderRadius:10,border:"1px solid var(--border)"}}>
+                  {[{id:"home",label:"🏠 Home"},{id:"search",label:"🔍 Busca"}].map(t=>(
+                    <button key={t.id} onClick={()=>setType(t.id)}
+                      style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",
+                        background:type===t.id?"rgba(29,155,240,.15)":"transparent",
+                        color:type===t.id?"#1d9bf0":"var(--text-2)",fontSize:12,fontWeight:type===t.id?700:400,
+                        cursor:"pointer",transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Eporner: category filter — todas as 4 confirmadas contra o site ao
+                  vivo, mas só pra navegação (Home): a busca por palavra-chave do
+                  Eporner usa a mesma página de tag geral não importa a categoria
+                  selecionada, então ela é ignorada quando combinada com Busca. */}
+              {platform==="eporner"&&(
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:11,color:"var(--text-2)",display:"block",marginBottom:5}}>Categoria</label>
+                  <select value={epCategory} onChange={e=>setEpCategory(e.target.value)}
+                    style={{width:"100%",padding:"9px 10px",background:"var(--bg-input)",border:"1px solid var(--border)",
+                      borderRadius:8,color:"var(--text)",fontSize:13,cursor:"pointer",appearance:"auto"}}>
+                    <option value="straight">❤️ Heterossexual</option>
+                    <option value="gay">🏳️‍🌈 Gay</option>
+                    <option value="sapphic">🏳️‍🌈 Sáfica</option>
+                    <option value="trans">🏳️‍⚧️ Trans</option>
+                  </select>
+                  {epCategory!=="straight"&&type==="search"&&(
+                    <div style={{marginTop:8,padding:"10px 12px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:8,fontSize:12,color:"var(--text-2)",lineHeight:1.5}}>
+                      ℹ️ A busca por palavra-chave do Eporner não combina com categoria — ela busca no catálogo geral (a categoria só filtra a Home).
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* YouJizz: mode tabs (Home / Busca) — sem seletor de categoria: o
+                  filtro Gay/Trans do site é via cookie (/setFilter?filter=...),
+                  não uma URL navegável, então não é oferecido aqui. */}
+              {platform==="youjizz"&&(
+                <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"var(--bg-input)",padding:4,borderRadius:10,border:"1px solid var(--border)"}}>
+                  {[{id:"home",label:"🏠 Home"},{id:"search",label:"🔍 Busca"}].map(t=>(
+                    <button key={t.id} onClick={()=>setType(t.id)}
+                      style={{flex:1,padding:"8px 4px",borderRadius:8,border:"none",
+                        background:type===t.id?"rgba(29,155,240,.15)":"transparent",
+                        color:type===t.id?"#1d9bf0":"var(--text-2)",fontSize:12,fontWeight:type===t.id?700:400,
+                        cursor:"pointer",transition:"all .15s",outline:type===t.id?"1px solid rgba(29,155,240,.3)":"none"}}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {/* xHamster/XVideos: mode tabs (Home / Busca) */}
               {(platform==="xhamster"||platform==="xvideos")&&(
                 <div className="tabsbar" style={{display:"flex",gap:5,marginBottom:16,background:"var(--bg-input)",padding:4,borderRadius:10,border:"1px solid var(--border)"}}>
@@ -2605,7 +2743,7 @@
                 <div style={{position:"relative",marginBottom:14}}>
                   <div style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"var(--text-2)"}}><SrchI/></div>
                   <input value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&search()}
-                    placeholder={platform==="x"?ph[type]:(platform==="xhamster"?"Buscar no xHamster…":(platform==="xfree"?"Buscar no xFree…":platform==="pornhub"?"Buscar no Pornhub…":platform==="xnxx"?"Buscar no XNXX…":platform==="tnaflix"?"Buscar no TNAFlix…":platform==="redtube"?"Buscar no RedTube…":"Buscar no XVideos…"))}
+                    placeholder={platform==="x"?ph[type]:(platform==="xhamster"?"Buscar no xHamster…":(platform==="xfree"?"Buscar no xFree…":platform==="pornhub"?"Buscar no Pornhub…":platform==="xnxx"?"Buscar no XNXX…":platform==="tnaflix"?"Buscar no TNAFlix…":platform==="redtube"?"Buscar no RedTube…":platform==="youporn"?"Buscar no YouPorn…":platform==="tube8"?"Buscar no Tube8…":platform==="thumbzilla"?"Buscar no Thumbzilla…":platform==="eporner"?"Buscar no Eporner…":platform==="youjizz"?"Buscar no YouJizz…":"Buscar no XVideos…"))}
                     style={{width:"100%",padding:"12px 14px 12px 42px",background:"var(--bg-input)",border:"1px solid var(--border)",borderRadius:10,color:"var(--text)",fontSize:14,transition:"border-color .15s"}}
                     onFocus={e=>e.target.style.borderColor="#1d9bf0"} onBlur={e=>e.target.style.borderColor="var(--border)"}/>
                 </div>
@@ -2640,6 +2778,21 @@
               {platform==="redtube"&&type==="home"&&(
                 <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
                   🏠 Carregará os vídeos em destaque da categoria selecionada no <strong style={{color:"var(--text-3)"}}>RedTube</strong> (sem necessidade de login).
+                </div>
+              )}
+              {(platform==="youporn"||platform==="tube8"||platform==="thumbzilla")&&type==="home"&&(
+                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
+                  🏠 Carregará os vídeos em destaque da página principal do <strong style={{color:"var(--text-3)"}}>{PLATFORM_LABEL[platform]}</strong> na categoria selecionada (sem necessidade de login).
+                </div>
+              )}
+              {platform==="eporner"&&type==="home"&&(
+                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
+                  🏠 Carregará os vídeos em destaque da categoria selecionada no <strong style={{color:"var(--text-3)"}}>Eporner</strong> (sem necessidade de login).
+                </div>
+              )}
+              {platform==="youjizz"&&type==="home"&&(
+                <div style={{padding:"12px 14px",background:"rgba(29,155,240,.06)",border:"1px solid rgba(29,155,240,.2)",borderRadius:10,fontSize:13,color:"var(--text-2)",marginBottom:14,lineHeight:1.6}}>
+                  🏠 Carregará os vídeos em destaque da página principal do <strong style={{color:"var(--text-3)"}}>YouJizz</strong> (sem necessidade de login).
                 </div>
               )}
               {(platform==="xhamster"||platform==="xvideos")&&type==="home"&&(
@@ -2703,7 +2856,7 @@
                 const disabled  = searching||(needQuery&&!query.trim());
                 const btnLabel  = platform==="x"&&type==="home"        ? "Carregar Para Você"
                                 : platform==="x"&&type==="following"   ? "Carregar Seguindo"
-                                : type==="home"                        ? "Carregar "+({xfree:"xFree",pornhub:"Pornhub",xnxx:"XNXX",tnaflix:"TNAFlix",redtube:"RedTube",xhamster:"xHamster",xvideos:"XVideos"}[platform]||platform)+" Home"
+                                : type==="home"                        ? "Carregar "+({xfree:"xFree",pornhub:"Pornhub",xnxx:"XNXX",tnaflix:"TNAFlix",redtube:"RedTube",xhamster:"xHamster",xvideos:"XVideos",youporn:"YouPorn",tube8:"Tube8",thumbzilla:"Thumbzilla",eporner:"Eporner",youjizz:"YouJizz"}[platform]||platform)+" Home"
                                 : platform==="xhamster"                ? "Buscar no xHamster"
                                 : platform==="xvideos"                 ? "Buscar no XVideos"
                                 : platform==="xfree"                   ? "Buscar no xFree"
@@ -2711,6 +2864,11 @@
                                 : platform==="xnxx"                    ? "Buscar no XNXX"
                                 : platform==="tnaflix"                 ? "Buscar no TNAFlix"
                                 : platform==="redtube"                 ? "Buscar no RedTube"
+                                : platform==="youporn"                 ? "Buscar no YouPorn"
+                                : platform==="tube8"                   ? "Buscar no Tube8"
+                                : platform==="thumbzilla"               ? "Buscar no Thumbzilla"
+                                : platform==="eporner"                 ? "Buscar no Eporner"
+                                : platform==="youjizz"                 ? "Buscar no YouJizz"
                                 : "Buscar Vídeos";
                 return (
                   <button onClick={()=>search()} disabled={disabled}

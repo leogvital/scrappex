@@ -826,7 +826,7 @@ def _new_site_ss():
     }
 
 
-_SITE_SS = {site: _new_site_ss() for site in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube")}
+_SITE_SS = {site: _new_site_ss() for site in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube", "youporn", "tube8", "thumbzilla", "eporner", "youjizz")}
 _SITE_SS_TIMEOUT = 600
 
 # ── xFree session (Selenium — both home and search load/paginate via client-side
@@ -1216,6 +1216,260 @@ def _scrape_pornhub(query, page=1, category="straight"):
     return results, (None if results else "Nenhum resultado encontrado.")
 
 
+# ── YouPorn / Tube8 / Thumbzilla — same Aylo-network card template
+# (<article class="video-box">), differing only in domain, the search box's
+# param name, and its path. Confirmed category support is limited to
+# straight/gay (both just a /gay/ path prefix, same as several other sites
+# here) — trans/sapphic weren't verified against the live sites, so they're
+# not offered rather than claiming support that might silently no-op.
+_YPF_SITES = {
+    "youporn":   {"domain": "www.youporn.com",   "search_path": "/search/",      "param": "query"},
+    "tube8":     {"domain": "www.tube8.com",      "search_path": "/searches.html", "param": "q"},
+    "thumbzilla": {"domain": "www.thumbzilla.com", "search_path": "/search/",      "param": "query"},
+}
+
+
+def _scrape_youporn_family(site, query, page=1, category="straight"):
+    """
+    Shared scraper for the YouPorn/Tube8/Thumbzilla Aylo-network template.
+    `site` is a key into _YPF_SITES. Returns (results_list, error_or_None).
+    """
+    import re, requests
+    from html import unescape
+
+    cfg = _YPF_SITES[site]
+    domain = cfg["domain"]
+    prefix = "/gay" if category == "gay" else ""
+
+    params = {}
+    if query:
+        params[cfg["param"]] = query
+    if page > 1:
+        params["page"] = page
+
+    if query:
+        url = f"https://{domain}{prefix}{cfg['search_path']}"
+    else:
+        url = f"https://{domain}{prefix}/"
+
+    try:
+        r = requests.get(url, params=params, headers=_SITE_HEADERS, timeout=20)
+        r.raise_for_status()
+    except Exception as ex:
+        return [], f"Erro ao acessar {site}: {ex}"
+
+    html = r.text
+    # The search backend for this network occasionally serves a stale
+    # "Down for Maintenance" node instead of real results (confirmed
+    # intermittent, not tied to any specific query/page) — surfaced as a
+    # normal-looking 200, so it has to be detected by content rather than
+    # status code. Treated as a transient error rather than "no results".
+    if "<title>YouPorn - Down for Maintenance" in html or "Down for Maintenance" in html[:2000]:
+        return [], f"{site}: serviço temporariamente fora do ar, tente de novo."
+
+    positions = [m.start() for m in re.finditer(r'<article class="video-box', html)]
+    results = []
+    for i, start in enumerate(positions):
+        end   = positions[i + 1] if i + 1 < len(positions) else len(html)
+        block = html[start:end]
+
+        id_m = re.search(r'data-video-id="(\d+)"', block)
+        if not id_m:
+            continue
+
+        # Path segment differs per site in this family: "/watch/" on
+        # YouPorn/Thumbzilla, "/porn-video/" on Tube8 — confirmed both forms
+        # against the live sites.
+        href_m  = re.search(r'<a href="(/(?:watch|porn-video)/\d+/)"', block)
+        title_m = re.search(r'class="video-title-text[^"]*"[^>]*>\s*<span>([^<]+)</span>', block)
+        thumb_m = re.search(r'data-src="([^"]+)"', block) or re.search(r'data-poster="([^"]+)"', block)
+        dur_m   = re.search(r'class="video-duration[^"]*"[^>]*>\s*<span>\s*([\d:]+)\s*</span>', block, re.DOTALL)
+        user_m  = re.search(r'data-uploader-name="([^"]*)"', block)
+        views_m = re.search(r"class='info-views'>\s*<span[^>]*>([\d.,]+[MK]?)<", block)
+
+        dur_sec = 0
+        if dur_m:
+            try:
+                parts = [int(p) for p in dur_m.group(1).strip().split(":")]
+                if len(parts) == 3:
+                    dur_sec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+                elif len(parts) == 2:
+                    dur_sec = parts[0] * 60 + parts[1]
+            except ValueError:
+                pass
+
+        results.append({
+            "id":          id_m.group(1),
+            "url":         f"https://{domain}{href_m.group(1)}" if href_m else "",
+            "title":       unescape(title_m.group(1)).strip() if title_m else f"{site} #{id_m.group(1)}",
+            "uploader":    unescape(user_m.group(1)) if user_m else "",
+            "uploader_id": "",
+            "duration":    dur_sec,
+            # The raw attribute carries a literal "&amp;" between the
+            # signed URL's hash/validto params (same gotcha as RedTube's
+            # data-o_thumb) — left un-unescaped, the query string is
+            # malformed and the signature check 403s even with the right
+            # Referer.
+            "thumbnail":   _ypf_thumb_url(unescape(thumb_m.group(1))) if thumb_m else "",
+            "view_count":  _parse_pornhub_views(views_m.group(1)) if views_m else 0,
+            "like_count":  0,
+        })
+
+    return results, (None if results else "Nenhum resultado encontrado.")
+
+
+def _scrape_youporn(query, page=1, category="straight"):
+    return _scrape_youporn_family("youporn", query, page, category)
+
+
+def _scrape_tube8(query, page=1, category="straight"):
+    return _scrape_youporn_family("tube8", query, page, category)
+
+
+def _scrape_thumbzilla(query, page=1, category="straight"):
+    return _scrape_youporn_family("thumbzilla", query, page, category)
+
+
+def _scrape_eporner(query, page=1, category="straight"):
+    """
+    Scrape one page of www.eporner.com results (~59 videos per page, 1-based).
+    category: straight | gay | sapphic | trans — all are plain path prefixes
+    (/cat/gay/, /cat/lesbian/, /cat/trans/), confirmed against the live site.
+    Returns (results_list, error_or_None).
+    """
+    import re, requests, urllib.parse
+    from html import unescape
+
+    cat_path = {"gay": "/cat/gay", "sapphic": "/cat/lesbian", "trans": "/cat/trans"}.get(category, "")
+
+    if query:
+        url = f"https://www.eporner.com/tag/{urllib.parse.quote(query)}/{page}/"
+    else:
+        url = f"https://www.eporner.com{cat_path or '/'}"
+        if page > 1:
+            url += f"{page}/" if url.endswith("/") else f"/{page}/"
+
+    try:
+        r = requests.get(url, headers=_SITE_HEADERS, timeout=20)
+        r.raise_for_status()
+    except Exception as ex:
+        return [], f"Erro ao acessar Eporner: {ex}"
+
+    html = r.text
+    positions = [m.start() for m in re.finditer(r'<div class="mb[" ]', html)]
+    results = []
+    for i, start in enumerate(positions):
+        end   = positions[i + 1] if i + 1 < len(positions) else len(html)
+        block = html[start:end]
+
+        id_m = re.search(r'data-id="(\d+)"', block)
+        if not id_m:
+            continue
+
+        link_m  = re.search(r'<p class="mbtit"><a href="([^"]+)">([^<]+)</a>', block)
+        thumb_m = re.search(r'<img src="([^"]+)"', block)
+        dur_m   = re.search(r'class="mbtim"[^>]*>([^<]+)<', block)
+        views_m = re.search(r'class="mbvie"[^>]*>([\d,]+)<', block)
+        user_m  = re.search(r'title="Uploader">([^<]+)</a>', block)
+
+        dur_sec = 0
+        if dur_m:
+            try:
+                parts = [int(p) for p in dur_m.group(1).strip().split(":")]
+                if len(parts) == 3:
+                    dur_sec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+                elif len(parts) == 2:
+                    dur_sec = parts[0] * 60 + parts[1]
+            except ValueError:
+                pass
+
+        results.append({
+            "id":          id_m.group(1),
+            "url":         f"https://www.eporner.com{link_m.group(1)}" if link_m else "",
+            "title":       unescape(link_m.group(2)).strip() if link_m else f"Eporner #{id_m.group(1)}",
+            "uploader":    unescape(user_m.group(1)) if user_m else "",
+            "uploader_id": "",
+            "duration":    dur_sec,
+            "thumbnail":   thumb_m.group(1) if thumb_m else "",
+            "view_count":  _parse_pornhub_views(views_m.group(1)) if views_m else 0,
+            "like_count":  0,
+        })
+
+    return results, (None if results else "Nenhum resultado encontrado.")
+
+
+def _scrape_youjizz(query, page=1, category="straight"):
+    """
+    Scrape one page of www.youjizz.com results (~24 videos per page, 1-based).
+    No category support confirmed — the site's Gay/Trans filters are set via
+    a cookie-based `/setFilter?filter=...` endpoint rather than a navigable
+    URL, so this always browses/searches the unfiltered catalog regardless
+    of `category` (same shape of limitation as Pornhub's Trans vertical
+    having no keyword-search endpoint — documented rather than silently
+    no-op'd).
+    Returns (results_list, error_or_None).
+    """
+    import re, requests, urllib.parse
+    from html import unescape
+
+    if query:
+        url = f"https://www.youjizz.com/search/{urllib.parse.quote(query)}-{page}.html"
+    else:
+        url = "https://www.youjizz.com/" if page == 1 else f"https://www.youjizz.com/newest-{page}.html"
+
+    try:
+        r = requests.get(url, headers=_SITE_HEADERS, timeout=20)
+        r.raise_for_status()
+    except Exception as ex:
+        return [], f"Erro ao acessar YouJizz: {ex}"
+
+    html = r.text
+    positions = [m.start() for m in re.finditer(r'class="video-thumb" data-videoId="(\d+)"', html)]
+    results = []
+    for i, start in enumerate(positions):
+        end   = positions[i + 1] if i + 1 < len(positions) else len(html)
+        block = html[start:end]
+
+        id_m = re.search(r'data-videoId="(\d+)"', block)
+        if not id_m:
+            continue
+
+        href_m  = re.search(r'<a data-video-id="\d+"[^>]+href="([^"]+)"', block)
+        title_m = re.search(r'class="agego-content-title">([^<]+)</a>', block)
+        thumb_m = re.search(r'data-original="([^"]+)"', block)
+        dur_m   = re.search(r'class="time">[^<]*<i[^>]*></i>&nbsp;([\d:]+)</span>', block)
+        views_m = re.search(r'class="format-views">([\d,]+)</span>', block)
+
+        dur_sec = 0
+        if dur_m:
+            try:
+                parts = [int(p) for p in dur_m.group(1).strip().split(":")]
+                if len(parts) == 3:
+                    dur_sec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+                elif len(parts) == 2:
+                    dur_sec = parts[0] * 60 + parts[1]
+            except ValueError:
+                pass
+
+        thumb = thumb_m.group(1) if thumb_m else ""
+        if thumb.startswith("//"):
+            thumb = "https:" + thumb
+
+        results.append({
+            "id":          id_m.group(1),
+            "url":         f"https://www.youjizz.com{href_m.group(1)}" if href_m else "",
+            "title":       unescape(title_m.group(1)).strip() if title_m else f"YouJizz #{id_m.group(1)}",
+            "uploader":    "",
+            "uploader_id": "",
+            "duration":    dur_sec,
+            "thumbnail":   thumb,
+            "view_count":  _parse_pornhub_views(views_m.group(1)) if views_m else 0,
+            "like_count":  0,
+        })
+
+    return results, (None if results else "Nenhum resultado encontrado.")
+
+
 # ── XNXX category → URL segment. Unlike Pornhub (dedicated subdomain/path per
 # orientation), XNXX filters everything through /search/<segments>: a single
 # extra path segment before the query acts as a category filter for "gay" and
@@ -1517,6 +1771,23 @@ def _tw_thumb_url(raw):
     return raw
 
 
+def _ypf_thumb_url(raw):
+    """Same pix-cdn77 hotlink block as RedTube (see _rt_thumb_url above),
+    on the Aylo-network sites (YouPorn/Tube8/Thumbzilla): some videos only
+    have a dynamic thumbnail served from pix-cdn77.<brand>cdn.com instead of
+    a static one, and that specific host 403s without a Referer from
+    anywhere in the family — confirmed any of youporn.com/tube8.com/
+    thumbzilla.com works as the Referer regardless of which of the three
+    the thumbnail itself came from, so one fixed value covers all three
+    instead of threading the originating site through. The non-dynamic
+    thumbnails (fi1-ph.ypncdn.com, ei-ph.t8cdn.com, etc.) load fine with no
+    special handling and are left as plain URLs."""
+    if raw and "pix-cdn77." in raw:
+        import urllib.parse
+        return "/api/thumb-proxy?url=" + urllib.parse.quote(raw, safe="")
+    return raw
+
+
 @app.route("/api/thumb-proxy")
 def thumb_proxy():
     import requests
@@ -1527,13 +1798,19 @@ def thumb_proxy():
     host = urlparse(url).hostname or ""
     # Allowlist by suffix, not prefix/substring — prevents someone passing an
     # arbitrary URL (SSRF) through this endpoint by crafting a hostname that
-    # merely contains one of these strings somewhere.
-    allowed = host.endswith(".rdtcdn.com") or host == "twimg.com" or host.endswith(".twimg.com")
+    # merely contains one of these strings somewhere. The pix-cdn77 case
+    # additionally requires that exact subdomain label (not just the known
+    # suffix) — "pix-cdn77.evil.com" would otherwise slip through on the
+    # suffix check alone if evil.com ever matched one of these.
+    is_ypf_pix = host.startswith("pix-cdn77.") and (host.endswith(".ypncdn.com") or host.endswith(".t8cdn.com"))
+    allowed = host.endswith(".rdtcdn.com") or host == "twimg.com" or host.endswith(".twimg.com") or is_ypf_pix
     if not url.startswith("https://") or not allowed:
         return jsonify({"error": "Host não permitido"}), 400
     headers = dict(_SITE_HEADERS)
     if host.endswith(".rdtcdn.com"):
         headers["Referer"] = "https://www.redtube.com/"
+    elif is_ypf_pix:
+        headers["Referer"] = "https://www.youporn.com/"
     try:
         r = requests.get(url, headers=headers, timeout=15)
         r.raise_for_status()
@@ -1731,6 +2008,16 @@ def search_site_page(site, query, page, sort="relevance", duration="any", catego
         results, err = _scrape_tnaflix(query, page=page, category=category, sort=sort, duration=duration)
     elif site == "redtube":
         results, err = _scrape_redtube(query, page=page, category=category, sort=sort, duration=duration)
+    elif site == "youporn":
+        results, err = _scrape_youporn(query, page=page, category=category)
+    elif site == "tube8":
+        results, err = _scrape_tube8(query, page=page, category=category)
+    elif site == "thumbzilla":
+        results, err = _scrape_thumbzilla(query, page=page, category=category)
+    elif site == "eporner":
+        results, err = _scrape_eporner(query, page=page, category=category)
+    elif site == "youjizz":
+        results, err = _scrape_youjizz(query, page=page, category=category)
     else:
         return [], 0, f"Plataforma não suportada: {site}"
 
@@ -2798,7 +3085,8 @@ def search():
         return jsonify({"error": f"Erro no navegador: {last_err}", "results": [], "has_more": False}), 500
 
     # ── External sites (XHamster, XVideos, Pornhub, XNXX, TNAFlix) ────────────
-    if platform in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube"):
+    if platform in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube",
+                    "youporn", "tube8", "thumbzilla", "eporner", "youjizz"):
         # query="" is valid now — it means "Home" (browse the category's landing feed)
         sort     = d.get("sort", "relevance")
         duration = d.get("duration", "any")
@@ -2934,7 +3222,8 @@ def search():
 # still works exactly as before for anything that wants a synchronous call.
 _search_tasks = {}
 _SEARCH_TASK_MAX_AGE = 3600  # seconds — stale finished tasks get swept by the watchdog
-_ALL_SEARCH_PLATFORMS = ["x", "xhamster", "xvideos", "xfree", "pornhub", "xnxx", "tnaflix", "redtube"]
+_ALL_SEARCH_PLATFORMS = ["x", "xhamster", "xvideos", "xfree", "pornhub", "xnxx", "tnaflix", "redtube",
+                          "youporn", "tube8", "thumbzilla", "eporner", "youjizz"]
 
 
 def _call_search_view(body):
@@ -2984,6 +3273,16 @@ def _body_for_all_platform(platform, d):
         return {"query": q, "platform": "tnaflix", "type": "search", "category": d.get("tfCategory", "straight"), "count": count}
     if platform == "redtube":
         return {"query": q, "platform": "redtube", "type": "search", "category": d.get("rtCategory", "straight"), "count": count}
+    if platform == "youporn":
+        return {"query": q, "platform": "youporn", "type": "search", "category": d.get("ypCategory", "straight"), "count": count}
+    if platform == "tube8":
+        return {"query": q, "platform": "tube8", "type": "search", "category": d.get("t8Category", "straight"), "count": count}
+    if platform == "thumbzilla":
+        return {"query": q, "platform": "thumbzilla", "type": "search", "category": d.get("tzCategory", "straight"), "count": count}
+    if platform == "eporner":
+        return {"query": q, "platform": "eporner", "type": "search", "category": d.get("epCategory", "straight"), "count": count}
+    if platform == "youjizz":
+        return {"query": q, "platform": "youjizz", "type": "search", "count": count}
     return {"query": q, "platform": platform, "type": "search", "sort": "relevance", "duration": "any",
             "category": d.get("siteCategory", "straight"), "count": count}
 
