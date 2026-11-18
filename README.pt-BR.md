@@ -337,7 +337,8 @@ Scraping direto da página HTML, sem navegador headless (`_scrape_eporner`). Dua
 | 🏳️‍⚧️ Trans | `/cat/trans/` |
 
 - **Categoria só se aplica à Home, não à Busca**: a busca por palavra-chave do Eporner sempre cai na mesma página geral `/tag/<query>/<page>/` não importa a categoria — confirmado contra o site, não existe uma URL combinada tipo `/cat/<x>/tag/<query>/`. Em vez de derrubar o filtro em silêncio, a interface mostra um aviso quando uma categoria diferente de Heterossexual é combinada com Busca.
-- **Seletor de card**: `<div class="mb" data-id="...">` — limpo e completo por card (título/url/miniatura/duração/visualizações/uploader todos presentes direto, sem atributo de lazy-load pra resolver, diferente da maioria dos outros sites aqui).
+- **Seletor de card**: `<div class="mb" data-id="...">` — limpo e completo por card (título/url/miniatura/duração/visualizações/uploader todos presentes direto nos atributos, não espalhados num atributo de lazy-load como na maioria dos outros sites aqui).
+- **A regex da miniatura era restrita demais, não era um problema de lazy-load**: a URL real está sempre num `src` puro em todo card, mas o próprio template do site adiciona `loading="lazy"` antes do `src` em alguns cards (não tem relação com posição — as duas formas aparecem misturadas na mesma página) — uma regex que exigia `src` logo depois de `<img ` perdia exatamente esses, deixando o campo de miniatura vazio pra eles. Corrigido casando `src` em qualquer lugar dentro da tag `<img ...>` em vez disso.
 - **Paginação tem sobreposição real, perceptível**: páginas consecutivas de `/tag/<query>/<page>/` compartilharam uns bons ~50% dos IDs nos testes — mesmo tipo de problema da paginação por categoria do Pornhub, tratado do mesmo jeito (o `seen_ids` de dedup já existente no `/api/search/more`).
 
 ### YouJizz (www.youjizz.com) — via HTTP

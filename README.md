@@ -337,7 +337,8 @@ Direct HTML page scraping, no headless browser (`_scrape_eporner`). Two tabs —
 | 🏳️‍⚧️ Trans | `/cat/trans/` |
 
 - **Category only applies to Home, not Search**: Eporner's keyword search always hits the same general `/tag/<query>/<page>/` page regardless of category — confirmed against the site, there's no `/cat/<x>/tag/<query>/`-style combined URL. Rather than silently drop the filter, the UI shows an info note when a non-Straight category is combined with Search.
-- **Card selector**: `<div class="mb" data-id="...">` — clean and complete per card (title/url/thumbnail/duration/views/uploader all present directly, no lazy-load attributes to resolve, unlike most other sites here).
+- **Card selector**: `<div class="mb" data-id="...">` — clean and complete per card (title/url/thumbnail/duration/views/uploader all present directly in attributes, not split across a lazy-load data attribute like most other sites here).
+- **Thumbnail regex was too strict, not a lazy-load issue**: the real URL is always in a plain `src` on every card, but the site's own template adds `loading="lazy"` before `src` on some cards (not tied to position — both forms appear mixed throughout a single page) — a regex requiring `src` immediately after `<img ` missed exactly those, leaving the thumbnail field empty for them. Fixed by matching `src` anywhere inside the `<img ...>` tag instead.
 - **Pagination has real, if noticeable, overlap**: consecutive `/tag/<query>/<page>/` pages shared roughly half their IDs in testing — same shape of issue as Pornhub's category pagination, handled the same way (the existing `seen_ids` dedup in `/api/search/more`).
 
 ### YouJizz (www.youjizz.com) — via HTTP
