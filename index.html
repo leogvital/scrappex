@@ -2084,8 +2084,11 @@
       // a time. Sequential on purpose: xHamster/XVideos/Pornhub all share one
       // backend session slot (_SITE_SS), so firing them concurrently would
       // have one clobber another's in-progress pagination state.
+      // tube8/thumbzilla deliberately excluded — yt-dlp can't actually download from
+      // either right now (see the platform-selector comment above), so including them
+      // here would surface results the user can't do anything with.
       const ALL_PLATFORMS = ["x","xhamster","xvideos","xfree","pornhub","xnxx","tnaflix","redtube",
-                             "youporn","tube8","thumbzilla","eporner","youjizz"];
+                             "youporn","eporner","youjizz"];
       const [searchAllMode, setSearchAllMode] = useState(false);
       const [allResults,    setAllResults]    = useState([]);
       const [searchingAll,  setSearchingAll]  = useState(false);
@@ -2265,8 +2268,12 @@
                   {id:"tnaflix",  label:"TNAFlix"},
                   {id:"redtube",  label:"RedTube"},
                   {id:"youporn",  label:"YouPorn"},
-                  {id:"tube8",    label:"Tube8"},
-                  {id:"thumbzilla", label:"Thumbzilla"},
+                  // Tube8/Thumbzilla: busca funciona, mas o yt-dlp não consegue
+                  // baixar vídeo nenhum deles agora (extrator do Tube8 desatualizado
+                  // contra o site atual, Thumbzilla sem suporte nenhum) — escondidos
+                  // até o yt-dlp dar suporte de verdade. Backend intacto, só a aba
+                  // some; reativar é só devolver essas duas linhas:
+                  // {id:"tube8", label:"Tube8"}, {id:"thumbzilla", label:"Thumbzilla"},
                   {id:"eporner",  label:"Eporner"},
                   {id:"youjizz",  label:"YouJizz"},
                   {id:"all",      label:"🌐 Tudo"},

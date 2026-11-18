@@ -2701,6 +2701,19 @@ def get_video_formats(url):
                 for f in info.get("formats", []):
                     if f.get("vcodec") == "none":
                         continue
+                    # YouPorn's dedicated yt-dlp extractor reports direct-MP4
+                    # formats (format_id like "1080p-4000k", protocol "https",
+                    # vcodec/acodec both unset) alongside the HLS ones — but
+                    # those direct URLs confirmed 410 Gone regardless of
+                    # quality (yt-dlp extractor bug, not fixable here), while
+                    # "best"/HLS selections work fine. Excluded so the quality
+                    # picker only offers choices that actually download,
+                    # rather than silently-broken options with a real-looking
+                    # size next to them.
+                    if (info.get("extractor") == "YouPorn"
+                            and f.get("protocol") == "https"
+                            and f.get("vcodec") is None):
+                        continue
                     size_b = f.get("filesize") or f.get("filesize_approx") or 0
                     fmts.append({
                         "format_id": f.get("format_id", ""),
@@ -3234,8 +3247,14 @@ def search():
 # still works exactly as before for anything that wants a synchronous call.
 _search_tasks = {}
 _SEARCH_TASK_MAX_AGE = 3600  # seconds — stale finished tasks get swept by the watchdog
+# tube8/thumbzilla deliberately excluded — yt-dlp can't actually download from
+# either right now (Tube8's extractor is broken against the site's current URL
+# scheme, Thumbzilla has no extractor at all), so "buscar em tudo" would surface
+# results the user can't do anything with. Both still work as single-platform
+# search/browse if hit directly (search_site_page, _SITE_SS) — only excluded
+# from this aggregate list.
 _ALL_SEARCH_PLATFORMS = ["x", "xhamster", "xvideos", "xfree", "pornhub", "xnxx", "tnaflix", "redtube",
-                          "youporn", "tube8", "thumbzilla", "eporner", "youjizz"]
+                          "youporn", "eporner", "youjizz"]
 
 
 def _call_search_view(body):
