@@ -20,8 +20,8 @@ Project status and next steps. Kept alongside [README.md](README.md) (which docu
 | TNAFlix | ✓ (Straight only — other categories have no keyword search, site limitation) | ✓ (no pagination — site limitation) | Straight/Gay/Sapphic/Trans | HTTP |
 | RedTube | ✓ (Straight/Gay — Sapphic/Trans have no keyword search, site limitation) | ✓ | Straight/Gay/Sapphic/Trans | HTTP |
 | YouPorn | ✓ | ✓ | Straight/Gay (Sapphic/Trans not verified yet) | HTTP |
-| Tube8 | ✓ | ✓ | Straight/Gay (Sapphic/Trans not verified yet) | HTTP |
-| Thumbzilla | ✓ | ✓ | Straight/Gay (Sapphic/Trans not verified yet) | HTTP |
+| Tube8 | Scrapes fine, **hidden from UI** — yt-dlp can't download (broken extractor, site limitation) | — | — | HTTP |
+| Thumbzilla | Scrapes fine, **hidden from UI** — yt-dlp can't download (no extractor at all, site limitation) | — | — | HTTP |
 | Eporner | ✓ (category ignored during Search — site limitation) | ✓ | Straight/Gay/Sapphic/Trans | HTTP |
 | YouJizz | ✓ | ✓ | — (no category — site limitation, cookie-based filter) | HTTP |
 
@@ -64,6 +64,7 @@ Project status and next steps. Kept alongside [README.md](README.md) (which docu
 - RedTube "carregar mais" stuck forever with no feedback — isolated backend tests of the exact query/category/duration kept paginating fine, so this needed live debug instrumentation (client and server) to pin down: `has_more` was computed from raw scraped page size alone, with no check for what survived the `seen_ids` dedup. The user's own session reached page 7 with content byte-identical to page 1, while the infinite-scroll effect re-fires the instant it's reattached whenever the grid is still "near the bottom" (trivially true once a page adds 0 new cards) — turning a single hiccup into a fast, invisible loop (6 auto-fired calls completed before the user could react). First fix treated one all-duplicate page as permanent end-of-results, but a 25-page scrape (and the user confirming RedTube's own pagination keeps showing new videos well past page 7) proved that was premature — settled on tracking `empty_streak` (only gives up after 3 consecutive all-duplicate pages, applies to every site on that `/api/search/more` path) plus a 1.2s minimum gap between auto-triggered loads, which also likely prevents the request burst that caused the original stale response
 - Duration showing as 0 for some Pornhub cards — premium/suggested cards mixed into results use `<var class="bgShadeEffect duration tooltipTrig">` instead of plain cards' `<var class="duration">`; the regex required an exact class match, missing those. Fixed by matching `\bduration\b` anywhere in the class value
 - Download reported "concluído" with no file behind it (seen on a YouPorn download — `/api/download/file/<id>` 404'd) — `build_ydl_opts` sets `ignoreerrors: True`, which lets yt-dlp swallow a failure in a later step (e.g. the HLS→MP4 remux) and still return as if extraction succeeded; `download_task` already had a glob fallback for when `prepare_filename`'s guess doesn't exist on disk, but never checked whether *that* found anything either, so it reported "complete" with a path that might not exist. Now checks `os.path.exists(fp)` after the fallback and reports an error instead of a false "complete"
+- YouPorn download actually erroring (follow-up to the fix above, same user report) — reproducing the exact video/format found YouPorn's quality picker offered direct-MP4 formats that 410 Gone regardless of quality, a yt-dlp extractor bug; "Melhor qualidade (auto)" already avoided them (yt-dlp's own best-selection prefers the working HLS streams) but a manually-picked quality didn't. Excluded those broken candidates from `get_video_formats()`'s output. Same investigation also found Tube8/Thumbzilla's download path is broken at the yt-dlp level (not this app's code) — see the platform table above and Known Limitations below
 - Gunicorn 26 *control socket* permission error (`--no-control-socket`)
 - Download hanging when clicking "Baixar" while more videos were auto-loading (Gunicorn `sync` worker → `gthread` + 4 threads)
 - ~1-1.5 GB RAM leak per Chrome session that crashes on its own (`_hard_kill_driver`)
@@ -87,6 +88,8 @@ Project status and next steps. Kept alongside [README.md](README.md) (which docu
 - **YouPorn/Tube8/Thumbzilla / Sapphic and Trans**: not offered — unlike RedTube/XNXX/TNAFlix, these two categories weren't verified against the live sites for this family, so they're left out rather than risking silent no-ops
 - **Eporner / Search**: category filter only applies to Home — a keyword search always hits the same general tag page regardless of category (site limitation, confirmed against the live site)
 - **YouJizz**: no category support at all — its Gay/Trans filter is a cookie-based endpoint (`/setFilter?filter=...`), not a navigable URL
+- **Tube8 / downloading**: hidden from the UI — yt-dlp's `Tube8IE` doesn't recognize the site's current slug-less video URLs, and even after working around that (a synthetic slug still resolves to the real page and matches the extractor's regex) it reports "No video formats found" — broken against the current site at the yt-dlp level, confirmed independent of this app's scraping
+- **Thumbzilla / downloading**: hidden from the UI — yt-dlp has no extractor for the site at all ("Unsupported URL")
 
 ---
 
