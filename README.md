@@ -2,7 +2,7 @@
 
 *[Leia em português](README.pt-BR.md)*
 
-Local web application to search and download videos from **X (Twitter)**, **XHamster**, **XVideos**, **xFree**, **Pornhub**, **XNXX**, **TNAFlix** and **RedTube**.
+Local web application to search and download videos from **X (Twitter)**, **XHamster**, **XVideos**, **xFree**, **Pornhub**, **XNXX**, **TNAFlix**, **RedTube**, **YouPorn**, **Tube8**, **Thumbzilla**, **Eporner** and **YouJizz**.
 
 > See [ROADMAP.md](ROADMAP.md) for what's already done and what's planned next.
 
@@ -309,6 +309,41 @@ Direct HTML page scraping, no headless browser (`_scrape_redtube`). Two tabs —
 - **Card selector**: the `<li>` wrapper's own `id` prefix differs by page template (`tags_videos_<id>` on search results, `browse_<id>` on Home/category listings, confirmed against both live) — splitting on either alone misses the other template entirely. `class="js-pop thumbnail-card` is identical across both and appears exactly once per real card, so `_scrape_redtube` splits on that instead; `data-video-id` itself isn't a safe split marker since it appears twice per card (once on the `<li>`, once on the nested `<a>`).
 - **Views use English dot-decimal formatting** (e.g. `123K`) — same as Pornhub/TNAFlix, so `_scrape_redtube` reuses `_parse_pornhub_views`.
 - **Some thumbnails need a server-side proxy**: certain videos only have a dynamic, generated-from-a-video-frame thumbnail served from `pix-cdn77.rdtcdn.com`, instead of the older static `ei-ph.rdtcdn.com` jpg. Confirmed against the site: the exact same `pix-cdn77` URL returns `200` with a `Referer: https://www.redtube.com/` header and `403` without one — a browser's own `<img>` request, loading the thumbnail directly from our page, never sends that header, so those specific videos showed up with a broken preview image. `GET /api/thumb-proxy?url=<thumb_url>` fetches the image server-side with the right header and streams it back; `_rt_thumb_url()` only routes `pix-cdn77` URLs through it (also unescaping the `&amp;` HTML entity `data-o_thumb` carries around its `validto` param, which breaks the query string if passed through raw) — `ei-ph.rdtcdn.com` thumbnails already load fine with no header and are left as plain URLs, skipping the extra hop. The proxy itself allowlists by hostname *suffix* (`.rdtcdn.com`), not substring, to avoid being usable as an open SSRF relay for an arbitrary URL.
+
+### YouPorn, Tube8 and Thumbzilla — via HTTP
+All three are the same Aylo-network property, sharing one identical card template (`<article class="video-box" data-video-id="...">`) — scraped through a single shared parser, `_scrape_youporn_family()`, with a small per-site config (domain, search param name, search path). Two tabs — Home and Search — plus a category:
+
+| Category | Browse (Home) | Keyword search |
+|---|---|---|
+| ❤️ Straight | homepage (`/`) | YouPorn/Thumbzilla: `/search/?query=<q>`, Tube8: `/searches.html?q=<q>` |
+| 🏳️‍🌈 Gay | `/gay/` | same path prefixed with `/gay` |
+
+- **Sapphic/Trans aren't offered**: unlike RedTube/XNXX/TNAFlix, these two categories weren't verified against the live sites for this family (time constraints when the integration was built) — rather than claim support that might silently no-op, only Straight/Gay are in the UI.
+- **Three small differences between the three sites, despite the identical card markup**: the search box's `name` attribute is `query` on YouPorn/Thumbzilla but `q` on Tube8 (confirmed by reading each site's own search form); the search path is `/search/` on YouPorn/Thumbzilla but `/searches.html` on Tube8; and the watch-page URL segment is `/watch/<id>/` on YouPorn/Thumbzilla but `/porn-video/<id>/` on Tube8. `_YPF_SITES` holds the first two per site; the URL-segment difference is handled by one regex matching either form.
+- **The search backend intermittently serves a stale "Down for Maintenance" node** instead of real results — confirmed not tied to any specific query, page, or site in the family (a fresh identical request moments later succeeds); it's a normal-looking `200`, so `_scrape_youporn_family` detects it by content (`<title>YouPorn - Down for Maintenance`) and reports it as a transient error rather than "no results".
+- **Dynamic thumbnails need the same server-side proxy as RedTube**: some videos only have a dynamic, generated-from-a-video-frame thumbnail served from `pix-cdn77.<brand>cdn.com` (`ypncdn.com` for YouPorn/Thumbzilla, `t8cdn.com` for Tube8) instead of a static one — confirmed `200` with a `Referer` from anywhere in the Aylo family (any of the three sites' own domain works for any of the three) and `403` without one. `_ypf_thumb_url()` routes those through `/api/thumb-proxy`, whose allowlist now also accepts that specific `pix-cdn77.` subdomain on those two CDN domains (not a bare suffix match, so a crafted `pix-cdn77.evil.com` can't slip through). The raw HTML attribute also carries a literal `&amp;` between the signed URL's `hash`/`validto` params — same gotcha as RedTube's `data-o_thumb` — left un-unescaped, the malformed query string 403s the signature check regardless of Referer.
+
+### Eporner (www.eporner.com) — via HTTP
+Direct HTML page scraping, no headless browser (`_scrape_eporner`). Two tabs — Home and Search — plus a category, all four confirmed against the live site:
+
+| Category | Browse (Home) |
+|---|---|
+| ❤️ Straight | homepage (`/`) |
+| 🏳️‍🌈 Gay | `/cat/gay/` |
+| 🏳️‍🌈 Sapphic | `/cat/lesbian/` |
+| 🏳️‍⚧️ Trans | `/cat/trans/` |
+
+- **Category only applies to Home, not Search**: Eporner's keyword search always hits the same general `/tag/<query>/<page>/` page regardless of category — confirmed against the site, there's no `/cat/<x>/tag/<query>/`-style combined URL. Rather than silently drop the filter, the UI shows an info note when a non-Straight category is combined with Search.
+- **Card selector**: `<div class="mb" data-id="...">` — clean and complete per card (title/url/thumbnail/duration/views/uploader all present directly, no lazy-load attributes to resolve, unlike most other sites here).
+- **Pagination has real, if noticeable, overlap**: consecutive `/tag/<query>/<page>/` pages shared roughly half their IDs in testing — same shape of issue as Pornhub's category pagination, handled the same way (the existing `seen_ids` dedup in `/api/search/more`).
+
+### YouJizz (www.youjizz.com) — via HTTP
+Direct HTML page scraping, no headless browser (`_scrape_youjizz`). Two tabs — Home and Search.
+
+- **No category support**: YouJizz's Gay/Trans filters are set via a cookie-based `/setFilter?filter=gay` endpoint, not a navigable URL with a query param or path segment — there's nothing to combine with a plain `requests.get()`. Documented as a limitation (no category selector shown) rather than silently ignored.
+- **Card selector**: `<div class="video-thumb" data-videoId="...">`.
+- **Thumbnail is protocol-relative** (`//cdne-pics.youjizz.com/...`, no explicit `https:`) — `_scrape_youjizz` prepends it, otherwise the browser would resolve it against whatever scheme the page itself loaded under.
+- **Search URL is path-based with the page number baked in**: `/search/<query>-<page>.html` (1-based) — confirmed via the site's own pagination links rather than guessed.
 - **"Carregar mais" could get stuck in a silent runaway loop**: a user report ("primeira busca funciona, carregar mais não") traced through several rounds of debug instrumentation (client and server-side, since isolated backend tests of the exact same query/category/duration kept paginating correctly and couldn't reproduce it) down to `has_more` being computed purely from raw scraped page size (`raw_count >= 10`), with no check for what actually survived the `seen_ids` dedup. Server-side debug data from the user's own session showed a single test run reaching page 7 with content byte-identical to page 1, with `has_more` staying `true` regardless. Combined with the infinite-scroll effect, which re-fires the instant it's reattached whenever the grid is still "near the bottom" (trivially true once a page adds 0 new cards, since the page never grows), this turned into a fast, invisible loop silently burning through page numbers before the user could see anything happen — a debug trace caught 6 auto-fired calls completing faster than the user could react to the first one. The first fix treated any single all-duplicate page as "the site ran out of real results" and permanently stopped offering more — but a direct 25-page scrape (and the user confirming, on RedTube's own site, that paging "solo" by hand keeps showing different videos) found genuinely fresh content well past that point, so the page-7 duplicate was a transient hiccup, not an actual end-of-results. Settled on two changes together: `_SITE_SS` now tracks `empty_streak` (consecutive all-duplicate-after-dedup pages) and only gives up after 3 in a row, tolerating an isolated blip while still protecting against a genuinely-stuck site; and the infinite-scroll effect enforces a 1.2s minimum gap between auto-triggered loads, which is also what most plausibly caused the original hiccup (RedTube's cache/anti-bot layer reacting to an unthrottled burst of requests). The `empty_streak` guard applies to every site sharing that `/api/search/more` code path (XHamster/XVideos/Pornhub/XNXX/TNAFlix), not just RedTube.
 
 ---

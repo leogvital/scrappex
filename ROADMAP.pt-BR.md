@@ -19,6 +19,11 @@ Status do projeto e próximos passos. Mantido junto com o [README.pt-BR.md](READ
 | XNXX | ✓ (Sáfica sem busca por texto — limitação do site) | ✓ | Hétero/Gay/Sáfica/Trans | HTTP |
 | TNAFlix | ✓ (só Hétero — outras categorias sem busca por texto, limitação do site) | ✓ (sem paginação — limitação do site) | Hétero/Gay/Sáfica/Trans | HTTP |
 | RedTube | ✓ (Hétero/Gay — Sáfica/Trans sem busca por texto, limitação do site) | ✓ | Hétero/Gay/Sáfica/Trans | HTTP |
+| YouPorn | ✓ | ✓ | Hétero/Gay (Sáfica/Trans ainda não verificadas) | HTTP |
+| Tube8 | ✓ | ✓ | Hétero/Gay (Sáfica/Trans ainda não verificadas) | HTTP |
+| Thumbzilla | ✓ | ✓ | Hétero/Gay (Sáfica/Trans ainda não verificadas) | HTTP |
+| Eporner | ✓ (categoria ignorada na Busca — limitação do site) | ✓ | Hétero/Gay/Sáfica/Trans | HTTP |
+| YouJizz | ✓ | ✓ | — (sem categoria — limitação do site, filtro baseado em cookie) | HTTP |
 
 ### Conta e sessão
 - Login do app com usuário/senha configuráveis via `.env.local` (fora do repositório — veja `.env.local.example`), sessão persistente — sobrevive a fechar o navegador (cookie de 30 dias) e a reiniciar o servidor (chave secreta salva em disco)
@@ -78,13 +83,21 @@ Status do projeto e próximos passos. Mantido junto com o [README.pt-BR.md](READ
 - **Pornhub / Trans**: sem endpoint de busca por palavra-chave no site — a busca cai para o feed de destaque da categoria
 - **XVideos / Home**: a página inicial de cada categoria não pagina (mesmo conteúdo em toda página) — sem "carregar mais"
 - **xFree**: precisa de Selenium (não HTTP puro) porque o site carrega conteúdo via infinite-scroll client-side e bloqueia bots nas categorias Gay/Trans
+- **YouPorn/Tube8/Thumbzilla / Sáfica e Trans**: não oferecidas — diferente do RedTube/XNXX/TNAFlix, essas duas categorias não foram verificadas contra os sites ao vivo nessa família, então ficaram de fora em vez de arriscar um no-op silencioso
+- **Eporner / Busca**: o filtro de categoria só se aplica à Home — a busca por palavra-chave sempre cai na mesma página geral de tag não importa a categoria (limitação do site, confirmado ao vivo)
+- **YouJizz**: sem suporte a categoria nenhuma — o filtro Gay/Trans dele é um endpoint baseado em cookie (`/setFilter?filter=...`), não uma URL navegável
 
 ---
 
 ## 🔧 Próximos passos propostos
 
 ### Novas plataformas
-- [ ] Definir com o usuário quais sites entram em seguida (candidatos a levantar: outros agregadores com filtro de orientação, sites com API pública, etc.)
+- [x] YouPorn, Tube8, Thumbzilla, Eporner, YouJizz adicionados (ver tabela acima)
+- [ ] **Beeg**: SPA moderno em Vuetify/Tailwind — confirmado que precisa de navegador real (o HTML estático é só o shell do app), mas o fluxo real de busca não foi descoberto no tempo investido (clicar no ícone de busca + digitar + Enter não disparou nenhuma requisição real, só analytics) — precisa de mais investigação
+- [ ] **PornRabbit**: na real é um agregador de câmeras ao vivo (widgets do Chaturbate), não um site de vídeo gravado — não se encaixa no modelo do app, descartado
+- [ ] **Fapdu**: o domínio hoje só redireciona pro Pornhub (já coberto) — não sobrou nada pra raspar
+- [ ] **Video-One**: o domínio passado pelo usuário (`video-one.com`) não resolve — precisa da URL certa antes de investigar
+- [ ] Definir com o usuário quais sites entram em seguida depois disso
 
 ---
 

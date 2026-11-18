@@ -19,6 +19,11 @@ Project status and next steps. Kept alongside [README.md](README.md) (which docu
 | XNXX | ✓ (Sapphic has no keyword search — site limitation) | ✓ | Straight/Gay/Sapphic/Trans | HTTP |
 | TNAFlix | ✓ (Straight only — other categories have no keyword search, site limitation) | ✓ (no pagination — site limitation) | Straight/Gay/Sapphic/Trans | HTTP |
 | RedTube | ✓ (Straight/Gay — Sapphic/Trans have no keyword search, site limitation) | ✓ | Straight/Gay/Sapphic/Trans | HTTP |
+| YouPorn | ✓ | ✓ | Straight/Gay (Sapphic/Trans not verified yet) | HTTP |
+| Tube8 | ✓ | ✓ | Straight/Gay (Sapphic/Trans not verified yet) | HTTP |
+| Thumbzilla | ✓ | ✓ | Straight/Gay (Sapphic/Trans not verified yet) | HTTP |
+| Eporner | ✓ (category ignored during Search — site limitation) | ✓ | Straight/Gay/Sapphic/Trans | HTTP |
+| YouJizz | ✓ | ✓ | — (no category — site limitation, cookie-based filter) | HTTP |
 
 ### Account and session
 - App login with username/password configurable via `.env.local` (outside the repository — see `.env.local.example`), persistent session — survives closing the browser (30-day cookie) and restarting the server (secret key saved to disk)
@@ -78,13 +83,21 @@ Project status and next steps. Kept alongside [README.md](README.md) (which docu
 - **Pornhub / Trans**: no keyword-search endpoint on the site — search falls back to the category's featured feed
 - **XVideos / Home**: each category's landing page doesn't paginate (same content on every page) — no "load more"
 - **xFree**: needs Selenium (not plain HTTP) because the site loads content via client-side infinite scroll and blocks bots on the Gay/Trans categories
+- **YouPorn/Tube8/Thumbzilla / Sapphic and Trans**: not offered — unlike RedTube/XNXX/TNAFlix, these two categories weren't verified against the live sites for this family, so they're left out rather than risking silent no-ops
+- **Eporner / Search**: category filter only applies to Home — a keyword search always hits the same general tag page regardless of category (site limitation, confirmed against the live site)
+- **YouJizz**: no category support at all — its Gay/Trans filter is a cookie-based endpoint (`/setFilter?filter=...`), not a navigable URL
 
 ---
 
 ## 🔧 Proposed next steps
 
 ### New platforms
-- [ ] Decide with the user which sites come next (candidates to raise: other aggregators with an orientation filter, sites with a public API, etc.)
+- [x] YouPorn, Tube8, Thumbzilla, Eporner, YouJizz added (see table above)
+- [ ] **Beeg**: modern Vuetify/Tailwind SPA — confirmed it needs a real browser (static HTML is just an app shell), but its actual search flow couldn't be pinned down in the time spent (clicking the search icon + typing + Enter didn't trigger any real request, only analytics) — needs more investigation
+- [ ] **PornRabbit**: turned out to be a live-cam aggregator (Chaturbate widgets), not a pre-recorded video site — doesn't fit this app's model, dropped
+- [ ] **Fapdu**: the domain now just redirects to Pornhub (already covered) — nothing left to scrape
+- [ ] **Video-One**: the domain as given by the user (`video-one.com`) doesn't resolve — needs the correct URL before it can be investigated
+- [ ] Decide with the user which sites come next after that
 
 ---
 

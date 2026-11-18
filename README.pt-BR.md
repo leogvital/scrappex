@@ -2,7 +2,7 @@
 
 *[Read in English](README.md)*
 
-Aplicação web local para buscar e baixar vídeos do **X (Twitter)**, **XHamster**, **XVideos**, **xFree**, **Pornhub**, **XNXX**, **TNAFlix** e **RedTube**.
+Aplicação web local para buscar e baixar vídeos do **X (Twitter)**, **XHamster**, **XVideos**, **xFree**, **Pornhub**, **XNXX**, **TNAFlix**, **RedTube**, **YouPorn**, **Tube8**, **Thumbzilla**, **Eporner** e **YouJizz**.
 
 > Veja o [ROADMAP.pt-BR.md](ROADMAP.pt-BR.md) para o que já foi feito e os próximos passos planejados.
 
@@ -309,6 +309,41 @@ Scraping direto da página HTML, sem navegador headless (`_scrape_redtube`). Dua
 - **Seletor de card**: o prefixo do `id` do próprio `<li>` muda conforme o template da página (`tags_videos_<id>` nos resultados de busca, `browse_<id>` nas listagens de Home/categoria, confirmado contra os dois ao vivo) — o split em só um dos dois perde o outro template inteiro. `class="js-pop thumbnail-card` é idêntico nos dois e aparece exatamente uma vez por card de verdade, então `_scrape_redtube` corta nisso em vez disso; o próprio `data-video-id` não é um marcador de corte seguro já que aparece duas vezes por card (uma no `<li>`, outra no `<a>` aninhado).
 - **Visualizações usam formatação decimal em inglês** (ex. `123K`) — igual ao Pornhub/TNAFlix, então `_scrape_redtube` reaproveita `_parse_pornhub_views`.
 - **Algumas miniaturas precisam de um proxy do lado do servidor**: certos vídeos só têm uma miniatura dinâmica, gerada a partir de um frame do vídeo, servida por `pix-cdn77.rdtcdn.com`, em vez do jpg estático mais antigo de `ei-ph.rdtcdn.com`. Confirmado direto contra o site: a mesma URL `pix-cdn77` devolve `200` com um header `Referer: https://www.redtube.com/` e `403` sem ele — o próprio pedido `<img>` do navegador, carregando a miniatura direto da nossa página, nunca manda esse header, então esses vídeos específicos apareciam com a imagem de preview quebrada. `GET /api/thumb-proxy?url=<thumb_url>` busca a imagem do lado do servidor com o header certo e devolve ela; `_rt_thumb_url()` só passa URLs `pix-cdn77` por esse proxy (também desfazendo o escape HTML `&amp;` que o `data-o_thumb` carrega em volta do parâmetro `validto`, que quebra a query string se passado cru) — miniaturas `ei-ph.rdtcdn.com` já carregam normalmente sem header nenhum e continuam como URL simples, pulando o salto extra. O proxy em si permite por *sufixo* de hostname (`.rdtcdn.com`), não substring, pra evitar virar um relay SSRF aberto pra qualquer URL.
+
+### YouPorn, Tube8 e Thumbzilla — via HTTP
+Os três são a mesma propriedade da rede Aylo, compartilhando um template de card idêntico (`<article class="video-box" data-video-id="...">`) — raspados por um único parser compartilhado, `_scrape_youporn_family()`, com uma config pequena por site (domínio, nome do parâmetro de busca, caminho de busca). Duas abas — Home e Busca — mais categoria:
+
+| Categoria | Navegar (Home) | Busca por palavra-chave |
+|---|---|---|
+| ❤️ Heterossexual | homepage (`/`) | YouPorn/Thumbzilla: `/search/?query=<q>`, Tube8: `/searches.html?q=<q>` |
+| 🏳️‍🌈 Gay | `/gay/` | mesmo caminho prefixado com `/gay` |
+
+- **Sáfica/Trans não são oferecidas**: diferente do RedTube/XNXX/TNAFlix, essas duas categorias não foram verificadas contra os sites ao vivo nessa família (restrição de tempo quando a integração foi feita) — em vez de prometer suporte que pode não funcionar em silêncio, só Heterossexual/Gay aparecem na interface.
+- **Três diferenças pequenas entre os três sites, apesar do markup de card idêntico**: o atributo `name` da caixa de busca é `query` no YouPorn/Thumbzilla mas `q` no Tube8 (confirmado lendo o formulário de busca de cada site); o caminho de busca é `/search/` no YouPorn/Thumbzilla mas `/searches.html` no Tube8; e o segmento de URL da página do vídeo é `/watch/<id>/` no YouPorn/Thumbzilla mas `/porn-video/<id>/` no Tube8. `_YPF_SITES` guarda os dois primeiros por site; a diferença de segmento de URL é tratada por uma única regex que casa com os dois formatos.
+- **O backend de busca às vezes serve um nó obsoleto de "Down for Maintenance"** em vez de resultados de verdade — confirmado que não tem relação com nenhuma busca, página ou site específico da família (um pedido idêntico logo depois funciona normalmente); é um `200` de aparência normal, então `_scrape_youporn_family` detecta pelo conteúdo (`<title>YouPorn - Down for Maintenance`) e reporta como erro passageiro em vez de "nenhum resultado".
+- **Miniaturas dinâmicas precisam do mesmo proxy do lado do servidor do RedTube**: alguns vídeos só têm uma miniatura dinâmica, gerada a partir de um frame do vídeo, servida por `pix-cdn77.<marca>cdn.com` (`ypncdn.com` pro YouPorn/Thumbzilla, `t8cdn.com` pro Tube8) em vez de uma estática — confirmado `200` com um `Referer` de qualquer lugar da família Aylo (o domínio de qualquer um dos três sites funciona pros três) e `403` sem ele. `_ypf_thumb_url()` roteia essas através de `/api/thumb-proxy`, cuja allowlist agora também aceita esse subdomínio `pix-cdn77.` específico nesses dois domínios de CDN (não um match de sufixo simples, pra um `pix-cdn77.evil.com` forjado não conseguir passar). O atributo HTML cru também carrega um `&amp;` literal entre os parâmetros `hash`/`validto` da URL assinada — mesma pegadinha do `data-o_thumb` do RedTube — deixado sem desescapar, a query string malformada derruba a checagem de assinatura com `403` não importa o Referer.
+
+### Eporner (www.eporner.com) — via HTTP
+Scraping direto da página HTML, sem navegador headless (`_scrape_eporner`). Duas abas — Home e Busca — mais categoria, as quatro confirmadas contra o site ao vivo:
+
+| Categoria | Navegar (Home) |
+|---|---|
+| ❤️ Heterossexual | homepage (`/`) |
+| 🏳️‍🌈 Gay | `/cat/gay/` |
+| 🏳️‍🌈 Sáfica | `/cat/lesbian/` |
+| 🏳️‍⚧️ Trans | `/cat/trans/` |
+
+- **Categoria só se aplica à Home, não à Busca**: a busca por palavra-chave do Eporner sempre cai na mesma página geral `/tag/<query>/<page>/` não importa a categoria — confirmado contra o site, não existe uma URL combinada tipo `/cat/<x>/tag/<query>/`. Em vez de derrubar o filtro em silêncio, a interface mostra um aviso quando uma categoria diferente de Heterossexual é combinada com Busca.
+- **Seletor de card**: `<div class="mb" data-id="...">` — limpo e completo por card (título/url/miniatura/duração/visualizações/uploader todos presentes direto, sem atributo de lazy-load pra resolver, diferente da maioria dos outros sites aqui).
+- **Paginação tem sobreposição real, perceptível**: páginas consecutivas de `/tag/<query>/<page>/` compartilharam uns bons ~50% dos IDs nos testes — mesmo tipo de problema da paginação por categoria do Pornhub, tratado do mesmo jeito (o `seen_ids` de dedup já existente no `/api/search/more`).
+
+### YouJizz (www.youjizz.com) — via HTTP
+Scraping direto da página HTML, sem navegador headless (`_scrape_youjizz`). Duas abas — Home e Busca.
+
+- **Sem suporte a categoria**: os filtros Gay/Trans do YouJizz são definidos via um endpoint baseado em cookie (`/setFilter?filter=gay`), não uma URL navegável com query param ou segmento de caminho — não tem o que combinar com um `requests.get()` simples. Documentado como limitação (nenhum seletor de categoria aparece) em vez de ignorado em silêncio.
+- **Seletor de card**: `<div class="video-thumb" data-videoId="...">`.
+- **Miniatura é protocol-relative** (`//cdne-pics.youjizz.com/...`, sem `https:` explícito) — `_scrape_youjizz` adiciona o prefixo, senão o navegador resolveria contra qualquer esquema que a própria página tivesse carregado.
+- **URL de busca é baseada em caminho com o número da página embutido**: `/search/<query>-<page>.html` (base 1) — confirmado pelos próprios links de paginação do site em vez de chutado.
 - **"Carregar mais" podia travar num loop silencioso sem fim**: um relato do usuário ("primeira busca funciona, carregar mais não") foi investigado em várias rodadas de instrumentação de debug (cliente e servidor, já que testes isolados do backend com a mesma busca/categoria/duração continuavam paginando normalmente e não reproduziam o problema) até chegar na causa: `has_more` era calculado só pelo tamanho bruto da página raspada (`raw_count >= 10`), sem checar o que de fato sobrava depois da deduplicação por `seen_ids`. Dados de debug do lado do servidor, direto da sessão real do usuário, mostraram uma busca chegando na página 7 com conteúdo idêntico, byte a byte, ao da página 1, com `has_more` continuando `true` do mesmo jeito. Combinado com o efeito de scroll infinito, que dispara de novo assim que é reanexado sempre que a grade ainda está "perto do fim" (verdade trivial quando uma página adiciona 0 cards novos, já que a página nunca cresce), isso virava um loop rápido e invisível consumindo números de página antes do usuário conseguir ver qualquer coisa acontecer — um rastro de debug flagrou 6 chamadas automáticas completando mais rápido do que o usuário conseguia reagir à primeira. A primeira correção tratava qualquer página toda duplicada como "o site esgotou os resultados reais" e parava de oferecer mais pra sempre — mas uma raspagem direta de 25 páginas (e o próprio usuário confirmando que, no site do RedTube, mudar de página na busca "solo" mostra vídeos diferentes) achou conteúdo genuinamente novo bem além desse ponto, então o duplicado na página 7 foi um soluço passageiro, não um fim de resultados de verdade. A solução juntou duas mudanças: o `_SITE_SS` agora rastreia `empty_streak` (páginas seguidas 100% duplicadas depois da deduplicação) e só desiste depois de 3 seguidas, tolerando um soluço isolado mas ainda se protegendo contra um site genuinamente travado; e o efeito de scroll infinito passou a exigir um intervalo mínimo de 1.2s entre carregamentos automáticos, o que também é a explicação mais plausível pro soluço original (a camada de cache/anti-bot do RedTube reagindo a uma rajada de pedidos sem limite de velocidade). O `empty_streak` vale pra todo site que passa por esse mesmo trecho do `/api/search/more` (XHamster/XVideos/Pornhub/XNXX/TNAFlix), não só RedTube.
 
 ---
