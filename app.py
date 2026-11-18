@@ -1367,7 +1367,11 @@ def _scrape_eporner(query, page=1, category="straight"):
             continue
 
         link_m  = re.search(r'<p class="mbtit"><a href="([^"]+)">([^<]+)</a>', block)
-        thumb_m = re.search(r'<img src="([^"]+)"', block)
+        # Some cards' <img> has a `loading="lazy"` attribute before `src` (the
+        # site's own template adds it inconsistently — not tied to card
+        # position) — matching `src` anywhere in the tag instead of requiring
+        # it immediately after `<img ` catches those too.
+        thumb_m = re.search(r'<img[^>]*\bsrc="([^"]+)"', block)
         dur_m   = re.search(r'class="mbtim"[^>]*>([^<]+)<', block)
         views_m = re.search(r'class="mbvie"[^>]*>([\d,]+)<', block)
         user_m  = re.search(r'title="Uploader">([^<]+)</a>', block)
