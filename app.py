@@ -826,7 +826,7 @@ def _new_site_ss():
     }
 
 
-_SITE_SS = {site: _new_site_ss() for site in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube", "youporn", "tube8", "thumbzilla", "eporner", "youjizz")}
+_SITE_SS = {site: _new_site_ss() for site in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube", "youporn", "tube8", "thumbzilla", "eporner", "youjizz", "nuvid", "hellporno")}
 _SITE_SS_TIMEOUT = 600
 
 # ── xFree session (Selenium — both home and search load/paginate via client-side
@@ -1474,6 +1474,159 @@ def _scrape_youjizz(query, page=1, category="straight"):
     return results, (None if results else "Nenhum resultado encontrado.")
 
 
+def _scrape_nuvid(query, page=1, category="straight"):
+    """
+    Scrape one page of Nuvid results (~40 videos per page, 1-based).
+    No category support confirmed — no gay/trans path was found navigable
+    from the site's own nav (unlike most other sites here, documented as a
+    limitation rather than guessed at).
+
+    The site itself 301-redirects www.nuvid.com to www.nuvid.club, and that's
+    what's actually scraped from — but yt-dlp's NuvidIE only matches the
+    literal nuvid.com domain, so the stored `url` is rewritten to nuvid.com
+    (confirmed yt-dlp still extracts fine from that host directly, the
+    redirect notwithstanding).
+
+    Home (no query) doesn't paginate — `?page=N` returns the exact same
+    set regardless of N (confirmed against the live site, same shape of
+    limitation as XVideos' Home) — only Search pages through.
+    Returns (results_list, error_or_None).
+    """
+    import re, requests, urllib.parse
+    from html import unescape
+
+    if query:
+        url = f"https://www.nuvid.club/search/videos/{urllib.parse.quote(query)}"
+        if page > 1:
+            url += f"/{page}"
+    else:
+        url = "https://www.nuvid.club/"
+
+    try:
+        r = requests.get(url, headers=_SITE_HEADERS, timeout=20)
+        r.raise_for_status()
+    except Exception as ex:
+        return [], f"Erro ao acessar Nuvid: {ex}"
+
+    html = r.text
+    positions = [m.start() for m in re.finditer(r'class="box-tumb related_vid', html)]
+    results = []
+    for i, start in enumerate(positions):
+        end   = positions[i + 1] if i + 1 < len(positions) else len(html)
+        block = html[start:end]
+
+        href_m = re.search(r'<a href="(/video/(\d+)[^"]*)" title="([^"]+)"', block)
+        if not href_m:
+            continue
+
+        thumb_m = re.search(r'<img src="([^"]+)"', block)
+        dur_m   = re.search(r'class="time">([^<]+)</i>', block)
+
+        dur_sec = 0
+        if dur_m:
+            try:
+                parts = [int(p) for p in dur_m.group(1).strip().split(":")]
+                if len(parts) == 3:
+                    dur_sec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+                elif len(parts) == 2:
+                    dur_sec = parts[0] * 60 + parts[1]
+            except ValueError:
+                pass
+
+        results.append({
+            "id":          href_m.group(2),
+            "url":         f"https://www.nuvid.com{href_m.group(1)}",
+            "title":       unescape(href_m.group(3)).strip(),
+            "uploader":    "",
+            "uploader_id": "",
+            "duration":    dur_sec,
+            "thumbnail":   thumb_m.group(1) if thumb_m else "",
+            "view_count":  0,
+            "like_count":  0,
+        })
+
+    return results, (None if results else "Nenhum resultado encontrado.")
+
+
+def _scrape_hellporno(query, page=1, category="straight"):
+    """
+    Scrape one page of HellPorno results (~60 videos per page, 1-based).
+    No category support confirmed — no gay/trans path was found navigable.
+
+    Search doesn't paginate — `/search/N/?q=...` returns the exact same
+    set regardless of N (confirmed against the live site: identical content,
+    not a caching artifact — no CDN cache headers present, confirmed with a
+    cache-busting query param too), so Search is effectively single-page
+    here. Home (no query) browsing *does* paginate correctly via `/N/`
+    (confirmed: only 7/60 ids shared between page 1 and page 2) — the split
+    behavior is handled by only ever requesting page 1 for a keyword search.
+    Returns (results_list, error_or_None).
+    """
+    import re, requests, urllib.parse
+    from html import unescape
+
+    if query:
+        url = "https://hellporno.com/search/"
+        params = {"q": query}
+    else:
+        url = "https://hellporno.com/" if page == 1 else f"https://hellporno.com/{page}/"
+        params = {}
+
+    try:
+        r = requests.get(url, params=params, headers=_SITE_HEADERS, timeout=20)
+        r.raise_for_status()
+    except Exception as ex:
+        return [], f"Erro ao acessar HellPorno: {ex}"
+
+    html = r.text
+    positions = [m.start() for m in re.finditer(r'<div class="video-thumb">', html)]
+    results = []
+    for i, start in enumerate(positions):
+        end   = positions[i + 1] if i + 1 < len(positions) else len(html)
+        block = html[start:end]
+
+        # Home cards carry extra tracking attributes (data-rt=..., onClick=...)
+        # between class="title" and the closing >, that search-result cards
+        # don't — matching up to the next > instead of requiring it
+        # immediately after class="title" handles both (learned from the
+        # same "too-rigid regex" mistake on Eporner/Pornhub earlier).
+        href_m  = re.search(r'<a href="(https://hellporno\.com/videos/[^"]+)" class="title"[^>]*>([^<]+)</a>', block)
+        if not href_m:
+            continue
+        id_m    = re.search(r'<video[^>]+id="(\d+)"', block)
+        # The <img> after the muted <video preview> tag has the real poster —
+        # not the <video poster="..."> itself, which 404s on some cards.
+        thumb_m = re.search(r'<img alt="[^"]*" src="([^"]+)">', block)
+        dur_m   = re.search(r'class="time">([^<]+)</span>', block)
+        views_m = re.search(r'<span>([\d,]+) views</span>', block)
+
+        dur_sec = 0
+        if dur_m:
+            try:
+                parts = [int(p) for p in dur_m.group(1).strip().split(":")]
+                if len(parts) == 3:
+                    dur_sec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+                elif len(parts) == 2:
+                    dur_sec = parts[0] * 60 + parts[1]
+            except ValueError:
+                pass
+
+        vid = id_m.group(1) if id_m else href_m.group(1)
+        results.append({
+            "id":          vid,
+            "url":         href_m.group(1),
+            "title":       unescape(href_m.group(2)).strip(),
+            "uploader":    "",
+            "uploader_id": "",
+            "duration":    dur_sec,
+            "thumbnail":   thumb_m.group(1) if thumb_m else "",
+            "view_count":  _parse_pornhub_views(views_m.group(1)) if views_m else 0,
+            "like_count":  0,
+        })
+
+    return results, (None if results else "Nenhum resultado encontrado.")
+
+
 # ── XNXX category → URL segment. Unlike Pornhub (dedicated subdomain/path per
 # orientation), XNXX filters everything through /search/<segments>: a single
 # extra path segment before the query acts as a category filter for "gay" and
@@ -2022,6 +2175,10 @@ def search_site_page(site, query, page, sort="relevance", duration="any", catego
         results, err = _scrape_eporner(query, page=page, category=category)
     elif site == "youjizz":
         results, err = _scrape_youjizz(query, page=page, category=category)
+    elif site == "nuvid":
+        results, err = _scrape_nuvid(query, page=page, category=category)
+    elif site == "hellporno":
+        results, err = _scrape_hellporno(query, page=page, category=category)
     else:
         return [], 0, f"Plataforma não suportada: {site}"
 
@@ -3162,7 +3319,8 @@ def search():
 
     # ── External sites (XHamster, XVideos, Pornhub, XNXX, TNAFlix) ────────────
     if platform in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube",
-                    "youporn", "tube8", "thumbzilla", "eporner", "youjizz"):
+                    "youporn", "tube8", "thumbzilla", "eporner", "youjizz",
+                    "nuvid", "hellporno"):
         # query="" is valid now — it means "Home" (browse the category's landing feed)
         sort     = d.get("sort", "relevance")
         duration = d.get("duration", "any")
@@ -3185,6 +3343,23 @@ def search():
             _record_scraper_outcome(platform, raw_count > 0, context=f"category={category}")
         if err and not results:
             return jsonify({"error": err, "results": [], "has_more": False})
+        # The scrape above is the slow part (a real network round-trip) — if a
+        # newer search for this same platform started and reset `ss` while this
+        # one was in flight (e.g. clicking a platform tab auto-fires a Home
+        # search, then switching to Search and submitting before that first one
+        # finishes), `ss["id"]` no longer matches our own `sid`. Returning the
+        # results we already fetched to *this* caller is still correct — but
+        # writing any of the mutations below would stomp the newer search's
+        # state with stale data (confirmed reproducing this exact race: Nuvid's
+        # auto Home search landed its `finished=True` after a Search had
+        # already reset and returned real results, silently breaking that
+        # search's "carregar mais" with no error at all). Skip straight to
+        # returning this response instead.
+        if ss["id"] != sid:
+            return jsonify({
+                "results": _mark_downloaded(results), "count": len(results),
+                "has_more": raw_count >= 10, "search_id": sid,
+            })
         # has_more based on raw page size: if the site returned a full page, there are likely more
         has_more = raw_count >= 10
         if raw_count == 0:
@@ -3202,6 +3377,19 @@ def search():
         # back to browsing that category's (non-paginating) tag page whenever
         # it can't combine the category with the typed query.
         if platform == "tnaflix" and (not q or category != "straight"):
+            has_more = False
+            ss["finished"] = True
+        # Nuvid's Home landing page returns the exact same set regardless of
+        # page (confirmed against the live site) — same non-paginating-landing-
+        # page quirk as XVideos/TNAFlix above.
+        if platform == "nuvid" and not q:
+            has_more = False
+            ss["finished"] = True
+        # HellPorno's Search results don't paginate at all — `/search/N/?q=`
+        # returns the exact same set for every N (confirmed against the live
+        # site: identical content, not a caching artifact). Home browsing
+        # paginates fine, so this only restricts keyword search.
+        if platform == "hellporno" and q:
             has_more = False
             ss["finished"] = True
         # Dedup — some sites (e.g. Pornhub category browsing) repeat a handful of
@@ -3305,7 +3493,7 @@ _SEARCH_TASK_MAX_AGE = 3600  # seconds — stale finished tasks get swept by the
 # search/browse if hit directly (search_site_page, _SITE_SS) — only excluded
 # from this aggregate list.
 _ALL_SEARCH_PLATFORMS = ["x", "xhamster", "xvideos", "xfree", "pornhub", "xnxx", "tnaflix", "redtube",
-                          "youporn", "eporner", "youjizz"]
+                          "youporn", "eporner", "youjizz", "nuvid", "hellporno"]
 
 
 def _call_search_view(body):
@@ -3365,6 +3553,10 @@ def _body_for_all_platform(platform, d):
         return {"query": q, "platform": "eporner", "type": "search", "category": d.get("epCategory", "straight"), "count": count}
     if platform == "youjizz":
         return {"query": q, "platform": "youjizz", "type": "search", "count": count}
+    if platform == "nuvid":
+        return {"query": q, "platform": "nuvid", "type": "search", "count": count}
+    if platform == "hellporno":
+        return {"query": q, "platform": "hellporno", "type": "search", "count": count}
     return {"query": q, "platform": platform, "type": "search", "sort": "relevance", "duration": "any",
             "category": d.get("siteCategory", "straight"), "count": count}
 
