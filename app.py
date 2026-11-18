@@ -2789,6 +2789,18 @@ def download_task(task_id, url, format_id, out_dir):
                     key=os.path.getmtime, reverse=True,
                 )
                 fp = candidates[0] if candidates else fp
+            if not os.path.exists(fp):
+                # `ignoreerrors: True` (see build_ydl_opts) means yt-dlp can swallow a
+                # failure in a later step — e.g. the HLS->MP4 remux/merge — and still
+                # return `info` as if extraction succeeded, with no file actually on
+                # disk. Reporting "complete" in that case lied to the user (seen with
+                # a YouPorn download: UI said "concluído", /api/download/file/<id>
+                # 404'd). Report it as the failure it actually is instead.
+                download_progress[task_id] = {
+                    "status": "error",
+                    "error": "O download não produziu um arquivo final (pode ter falhado no merge do vídeo) — tente novamente.",
+                }
+                return
             download_progress[task_id].update({
                 "status": "complete", "filepath": fp, "filename": os.path.basename(fp),
             })
