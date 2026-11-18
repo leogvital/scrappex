@@ -102,6 +102,7 @@ Status do projeto e próximos passos. Mantido junto com o [README.pt-BR.md](READ
 - [ ] **PornRabbit**: na real é um agregador de câmeras ao vivo (widgets do Chaturbate), não um site de vídeo gravado — não se encaixa no modelo do app, descartado
 - [ ] **Fapdu**: o domínio hoje só redireciona pro Pornhub (já coberto) — não sobrou nada pra raspar
 - [ ] **Video-One**: o domínio passado pelo usuário (`video-one.com`) não resolve — precisa da URL certa antes de investigar
+- [ ] **SpankBang**: não seguido adiante — protegido por um desafio Cloudflare Turnstile completo (não um bot-check simples tipo o do xFree), confirmado que nunca resolve sozinho mesmo depois de 30s com a mesma config de Chrome headless + anti-detecção usada com sucesso no resto do app. O próprio extrator dedicado `SpankBangIE` do yt-dlp também toma o mesmo bloqueio `403 Forbidden` (confirmado direto, inclusive com impersonation de TLS do Chrome) — então mesmo que a raspagem passasse, o download não funcionaria. Precisaria de uma sessão com o desafio realmente resolvido (navegador não-headless, um serviço de resolução de captcha, ou proxy residencial) com os cookies mantidos atualizados e passados tanto pro scraper quanto pra cada chamada do yt-dlp — uma arquitetura bem mais pesada e frágil que qualquer outra coisa aqui. Decidido não fazer por enquanto (confirmado com o usuário) em vez de construir algo tão frágil
 - [ ] Definir com o usuário quais sites entram em seguida depois disso
 
 ---
