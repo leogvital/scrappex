@@ -2695,6 +2695,54 @@ def _xf_fetch_page(page_size=20):
     return results, has_more
 
 
+def _is_broken_youporn_direct(info, f):
+    """
+    YouPorn's dedicated yt-dlp extractor reports direct-MP4 formats
+    (format_id like "1080p-4000k", protocol "https", vcodec/acodec both
+    unset) alongside HLS ones — confirmed the direct URLs 410 Gone
+    regardless of quality (a yt-dlp extractor bug, not fixable on our
+    side), while the HLS formats work fine. Shared by every place that
+    picks/lists a format for a video (the quality picker, the in-browser
+    "assistir" preview, and the actual download) so a fix to the
+    detection logic can't drift between them — a report of "funcionou no
+    preview mas falhou no download" or vice versa would mean exactly
+    that kind of drift.
+    """
+    return (
+        info.get("extractor") == "YouPorn"
+        and f.get("protocol") == "https"
+        and f.get("vcodec") is None
+    )
+
+
+def _pick_safe_youporn_format(url):
+    """
+    For a YouPorn URL, resolve "best" to a specific working format_id up
+    front instead of letting yt-dlp's own quality-ranking choose — its
+    highest-ranked candidate is sometimes one of the broken direct-MP4
+    formats (see _is_broken_youporn_direct), not reliably always an HLS
+    one. Returns a format_id string, or None if resolution fails for any
+    reason (caller falls back to the plain "best" selector, same
+    behavior as before this existed).
+    """
+    try:
+        opts = build_ydl_opts({"skip_download": True}, url=url)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        if not info:
+            return None
+        candidates = [
+            f for f in info.get("formats", [])
+            if f.get("vcodec") != "none" and not _is_broken_youporn_direct(info, f)
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda f: (f.get("height") or 0, f.get("tbr") or 0), reverse=True)
+        return candidates[0].get("format_id") or None
+    except Exception:
+        return None
+
+
 def get_video_formats(url):
     opts = build_ydl_opts({"skip_download": True}, url=url)
     try:
@@ -2705,18 +2753,7 @@ def get_video_formats(url):
                 for f in info.get("formats", []):
                     if f.get("vcodec") == "none":
                         continue
-                    # YouPorn's dedicated yt-dlp extractor reports direct-MP4
-                    # formats (format_id like "1080p-4000k", protocol "https",
-                    # vcodec/acodec both unset) alongside the HLS ones — but
-                    # those direct URLs confirmed 410 Gone regardless of
-                    # quality (yt-dlp extractor bug, not fixable here), while
-                    # "best"/HLS selections work fine. Excluded so the quality
-                    # picker only offers choices that actually download,
-                    # rather than silently-broken options with a real-looking
-                    # size next to them.
-                    if (info.get("extractor") == "YouPorn"
-                            and f.get("protocol") == "https"
-                            and f.get("vcodec") is None):
+                    if _is_broken_youporn_direct(info, f):
                         continue
                     size_b = f.get("filesize") or f.get("filesize_approx") or 0
                     fmts.append({
@@ -2783,6 +2820,16 @@ def download_task(task_id, url, format_id, out_dir):
             download_progress[task_id].update({"percent": pct, "speed": d.get("_speed_str", ""), "eta": d.get("_eta_str", "")})
         elif d["status"] == "finished":
             download_progress[task_id].update({"status": "finished", "percent": 100})
+
+    if format_id == "best" and "youporn.com" in url:
+        # Letting yt-dlp's own "best" selector choose isn't safe here — its
+        # top-ranked candidate is sometimes one of the known-broken direct-MP4
+        # formats (_is_broken_youporn_direct), not reliably always a working
+        # HLS one, so a plain "best" download could fail unpredictably even
+        # though the quality picker and preview already avoid offering that
+        # format. Resolve to a specific working format_id up front instead;
+        # falls through to plain "best" if resolution fails for any reason.
+        format_id = _pick_safe_youporn_format(url) or format_id
 
     opts = build_ydl_opts({"format": format_id,
                             "outtmpl": os.path.join(out_dir, "%(title)s_%(id)s.%(ext)s"),
@@ -3557,6 +3604,7 @@ def preview_video():
                 if f.get("vcodec") != "none"
                 and f.get("acodec") != "none"
                 and f.get("url")
+                and not _is_broken_youporn_direct(info, f)
             ]
             # Sort descending by height then bitrate → best quality first
             combined.sort(key=lambda f: (f.get("height") or 0, f.get("tbr") or 0), reverse=True)
@@ -3565,7 +3613,8 @@ def preview_video():
                 # No combined format — pick best video-only (browser may still play it)
                 combined = sorted(
                     [f for f in info.get("formats", [])
-                     if f.get("vcodec") != "none" and f.get("url")],
+                     if f.get("vcodec") != "none" and f.get("url")
+                     and not _is_broken_youporn_direct(info, f)],
                     key=lambda f: (f.get("height") or 0, f.get("tbr") or 0),
                     reverse=True,
                 )
