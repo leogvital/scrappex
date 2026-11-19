@@ -1252,19 +1252,35 @@ def _scrape_youporn_family(site, query, page=1, category="straight"):
     else:
         url = f"https://{domain}{prefix}/"
 
-    try:
-        r = requests.get(url, params=params, headers=_SITE_HEADERS, timeout=20)
-        r.raise_for_status()
-    except Exception as ex:
-        return [], f"Erro ao acessar {site}: {ex}"
-
-    html = r.text
     # The search backend for this network occasionally serves a stale
     # "Down for Maintenance" node instead of real results (confirmed
-    # intermittent, not tied to any specific query/page) — surfaced as a
-    # normal-looking 200, so it has to be detected by content rather than
-    # status code. Treated as a transient error rather than "no results".
-    if "<title>YouPorn - Down for Maintenance" in html or "Down for Maintenance" in html[:2000]:
+    # intermittent, not tied to any specific query/page — a fresh identical
+    # request moments later succeeds) — surfaced as a normal-looking 200, so
+    # it has to be detected by content rather than status code. Retried a
+    # couple times here, inside the scrape itself, rather than surfaced as
+    # an error: /api/search/more's caller has no way to distinguish "site
+    # genuinely out of results" from "transient scrape failure" (both show
+    # up as raw_count == 0), and was treating this hiccup as the former —
+    # silently marking the session permanently finished after just one or
+    # two unlucky hits, with no error ever shown (confirmed via a live
+    # report: "carregar mais" spins, returns to the same state a few times,
+    # then jumps straight to "fim dos resultados" despite the site itself
+    # having many more pages for the same search). Hiding the flakiness
+    # here, where it's already understood, avoids having to teach every
+    # caller about it.
+    html = ""
+    for attempt in range(3):
+        try:
+            r = requests.get(url, params=params, headers=_SITE_HEADERS, timeout=20)
+            r.raise_for_status()
+        except Exception as ex:
+            return [], f"Erro ao acessar {site}: {ex}"
+        html = r.text
+        if "<title>YouPorn - Down for Maintenance" not in html and "Down for Maintenance" not in html[:2000]:
+            break
+        if attempt < 2:
+            time.sleep(1.5)
+    else:
         return [], f"{site}: serviço temporariamente fora do ar, tente de novo."
 
     positions = [m.start() for m in re.finditer(r'<article class="video-box', html)]
