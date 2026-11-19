@@ -1279,8 +1279,13 @@ def _scrape_youporn_family(site, query, page=1, category="straight"):
 
         # Path segment differs per site in this family: "/watch/" on
         # YouPorn/Thumbzilla, "/porn-video/" on Tube8 — confirmed both forms
-        # against the live sites.
-        href_m  = re.search(r'<a href="(/(?:watch|porn-video)/\d+/)"', block)
+        # against the live sites. Newer videos' href ends right after the
+        # numeric id (e.g. "/watch/190206671/"), but older/legacy-id videos
+        # carry a title slug after it too (e.g.
+        # "/watch/17155999/my-stepsister-tests.../") — a regex requiring the
+        # closing quote immediately after the id matched the first shape and
+        # silently missed the second, leaving `url` empty for those cards.
+        href_m  = re.search(r'<a href="(/(?:watch|porn-video)/\d+/[^"]*)"', block)
         title_m = re.search(r'class="video-title-text[^"]*"[^>]*>\s*<span>([^<]+)</span>', block)
         thumb_m = re.search(r'data-src="([^"]+)"', block) or re.search(r'data-poster="([^"]+)"', block)
         dur_m   = re.search(r'class="video-duration[^"]*"[^>]*>\s*<span>\s*([\d:]+)\s*</span>', block, re.DOTALL)
