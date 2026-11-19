@@ -1631,6 +1631,194 @@
       );
     }
 
+    // ── Easter egg: "Entrega Expressa" ────────────────────────────────────────
+    // A hidden runner mini-game, themed on the running gap between what every
+    // tube site's thumbnail promises ("satisfação instantânea!") and what you
+    // actually get (buffering, an age gate, a pop-up, a spinner that never
+    // ends) — the exact flavor of frustration this app exists to route
+    // around. Triggered by clicking the header logo 7× quickly; pure canvas +
+    // rAF, no backend involved, high score kept in localStorage only.
+    const EGG_OBSTACLES = [
+      {emoji:"⏳", label:"Buffering…"},
+      {emoji:"🔞", label:"Confirme sua idade"},
+      {emoji:"📵", label:"Anúncio pop-up"},
+      {emoji:"🙈", label:"Vídeo indisponível na sua região"},
+      {emoji:"🐌", label:"Carregando a 12kb/s"},
+    ];
+    const EGG_PICKUPS = ["🔥","💋","😘","⭐","💦"];
+    const EGG_GAMEOVER_LINES = [
+      "Como prometido… na próxima atualização 😏",
+      "99% carregado. Para sempre.",
+      "ETA da satisfação: nunca.",
+      "Era pra ser rapidinho 🙄🔥",
+      "Buffer infinito ativado.",
+      "\"Sem anúncios\" — mentira do trailer.",
+      "A promessa era essa, a entrega é essa daqui.",
+    ];
+
+    function EasterEggGame({ onClose }) {
+      const canvasRef = useRef(null);
+      const stateRef = useRef(null);
+      const rafRef = useRef(null);
+      const [score, setScore] = useState(0);
+      const [best, setBest] = useState(()=>{
+        try { return parseInt(localStorage.getItem("scrapperx_egg_best")||"0", 10) || 0; } catch { return 0; }
+      });
+      const [over, setOver] = useState(false);
+      const [line, setLine] = useState("");
+
+      function jump() {
+        const s = stateRef.current;
+        if (!s || s.over) return;
+        if (s.player.y >= s.groundY - 1) s.player.vy = -13.5;
+      }
+
+      // One single game loop, (re)used by both the initial mount and
+      // "tentar de novo" — avoids keeping two copies of this logic in sync.
+      function startGame() {
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext("2d");
+        const W = canvas.width, H = canvas.height;
+        const groundY = H - 36;
+        const s = {
+          player: {x:46, y:groundY, vy:0, w:30, h:30},
+          groundY, speed:6.2, gravity:0.75, tick:0, over:false,
+          obstacles: [], pickups: [], score:0,
+          nextObstacleIn: 60, nextPickupIn: 90,
+        };
+        stateRef.current = s;
+        setOver(false); setScore(0); setLine("");
+
+        function spawnObstacle() {
+          const o = EGG_OBSTACLES[Math.floor(Math.random()*EGG_OBSTACLES.length)];
+          s.obstacles.push({x:W+20, y:groundY, w:30, h:30, ...o});
+        }
+        function spawnPickup() {
+          const e = EGG_PICKUPS[Math.floor(Math.random()*EGG_PICKUPS.length)];
+          s.pickups.push({x:W+20, y:groundY-70-Math.random()*40, w:24, h:24, emoji:e, taken:false});
+        }
+
+        function loop() {
+          if (s.over) return;
+          s.tick++;
+          s.speed = Math.min(13, 6.2 + s.score*0.04);
+
+          s.player.vy += s.gravity;
+          s.player.y = Math.min(groundY, s.player.y + s.player.vy);
+          if (s.player.y >= groundY) { s.player.y = groundY; s.player.vy = 0; }
+
+          s.nextObstacleIn--; s.nextPickupIn--;
+          if (s.nextObstacleIn <= 0) { spawnObstacle(); s.nextObstacleIn = 55 + Math.random()*55 - s.speed*2; }
+          if (s.nextPickupIn <= 0) { spawnPickup(); s.nextPickupIn = 70 + Math.random()*70; }
+
+          for (const o of s.obstacles) o.x -= s.speed;
+          for (const p of s.pickups) p.x -= s.speed;
+          s.obstacles = s.obstacles.filter(o=>o.x > -40);
+          s.pickups = s.pickups.filter(p=>p.x > -40);
+
+          const pb = {x:s.player.x+4, y:s.player.y-s.player.h+4, w:s.player.w-8, h:s.player.h-8};
+          for (const o of s.obstacles) {
+            const ob = {x:o.x+3, y:o.y-o.h+3, w:o.w-6, h:o.h-6};
+            if (pb.x < ob.x+ob.w && pb.x+pb.w > ob.x && pb.y < ob.y+ob.h && pb.y+pb.h > ob.y) {
+              s.over = true;
+              setLine(EGG_GAMEOVER_LINES[Math.floor(Math.random()*EGG_GAMEOVER_LINES.length)]);
+              setOver(true);
+              setBest(prev=>{
+                const nb = Math.max(prev, s.score);
+                try { localStorage.setItem("scrapperx_egg_best", String(nb)); } catch {}
+                return nb;
+              });
+            }
+          }
+          for (const p of s.pickups) {
+            if (p.taken) continue;
+            const ppb = {x:p.x, y:p.y-p.h, w:p.w, h:p.h};
+            if (pb.x < ppb.x+ppb.w && pb.x+pb.w > ppb.x && pb.y < ppb.y+ppb.h && pb.y+pb.h > ppb.y) {
+              p.taken = true;
+              s.score += 5;
+              setScore(s.score);
+            }
+          }
+          if (!s.over && s.tick % 6 === 0) { s.score += 1; setScore(s.score); }
+
+          ctx.clearRect(0,0,W,H);
+          const grad = ctx.createLinearGradient(0,0,0,H);
+          grad.addColorStop(0, "#1a0e14"); grad.addColorStop(1, "#2b1118");
+          ctx.fillStyle = grad; ctx.fillRect(0,0,W,H);
+          ctx.strokeStyle = "rgba(255,255,255,.15)"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(0, groundY+2); ctx.lineTo(W, groundY+2); ctx.stroke();
+
+          ctx.save(); ctx.translate(s.player.x, s.player.y);
+          ctx.font = "28px sans-serif";
+          ctx.fillText("🔥", -14, -2);
+          ctx.restore();
+
+          for (const o of s.obstacles) {
+            ctx.font = "26px sans-serif";
+            ctx.fillText(o.emoji, o.x-13, o.y-2);
+          }
+          for (const p of s.pickups) {
+            if (p.taken) continue;
+            ctx.font = "22px sans-serif";
+            ctx.fillText(p.emoji, p.x-11, p.y);
+          }
+
+          rafRef.current = requestAnimationFrame(loop);
+        }
+        rafRef.current = requestAnimationFrame(loop);
+      }
+
+      useEffect(()=>{
+        startGame();
+        return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+      }, []); // eslint-disable-line
+
+      useEffect(()=>{
+        function onKey(e){ if (e.code==="Space"||e.code==="ArrowUp") { e.preventDefault(); jump(); } }
+        window.addEventListener("keydown", onKey);
+        return ()=>window.removeEventListener("keydown", onKey);
+      }, []);
+
+      function restart() {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        startGame();
+      }
+
+      return (
+        <div onClick={jump} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:2000,
+          display:"flex",alignItems:"center",justifyContent:"center",padding:16,cursor:"pointer"}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--bg-card)",border:"1px solid var(--border)",
+            borderRadius:16,padding:18,maxWidth:420,width:"100%",boxShadow:"0 10px 50px rgba(0,0,0,.6)",cursor:"default"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+              <h3 style={{fontSize:16,fontWeight:800,margin:0}}>🔥 Entrega Expressa</h3>
+              <button onClick={onClose} style={{background:"none",border:"none",color:"var(--text-2)",fontSize:20,cursor:"pointer",lineHeight:1}}>×</button>
+            </div>
+            <p style={{fontSize:11,color:"var(--text-2)",margin:"0 0 10px",lineHeight:1.4}}>
+              Prometido: satisfação instantânea. Entrega real: desvie dos obstáculos, pegue os brindes. Espaço / toque para pular.
+            </p>
+            <div style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1px solid var(--border-2)"}}>
+              <canvas ref={canvasRef} width={384} height={200} style={{display:"block",width:"100%",touchAction:"manipulation"}}/>
+              {over&&(
+                <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.72)",display:"flex",flexDirection:"column",
+                  alignItems:"center",justifyContent:"center",gap:10,padding:16,textAlign:"center"}}>
+                  <div style={{fontSize:13,color:"#fff",fontWeight:700}}>{line}</div>
+                  <div style={{fontSize:12,color:"var(--text-2)"}}>🔥 Calor: {score} &nbsp;·&nbsp; Recorde: {best}</div>
+                  <button onClick={restart} style={{padding:"8px 20px",borderRadius:9999,border:"none",
+                    background:"#1d9bf0",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                    Tentar de novo
+                  </button>
+                </div>
+              )}
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",marginTop:8,fontSize:12,color:"var(--text-2)"}}>
+              <span>🔥 Calor: {score}</span>
+              <span>Recorde: {best}</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     function App({ theme, onToggleTheme }) {
       const [session,   setSession]   = useState(null);
       const [showDirModal, setShowDirModal] = useState(false);
@@ -1724,6 +1912,21 @@
       // the HISTORY_MAX cap now, the client just renders whatever it says.
       const [searchHistory, setSearchHistory] = useState([]);
       const [showHistory, setShowHistory] = useState(false);
+
+      // Easter egg: click the header logo 7× within 2s of the last click.
+      const [showEgg, setShowEgg] = useState(false);
+      const eggClicksRef = useRef(0);
+      const eggTimerRef = useRef(null);
+      function onLogoClick(){
+        eggClicksRef.current++;
+        clearTimeout(eggTimerRef.current);
+        if (eggClicksRef.current >= 7) {
+          eggClicksRef.current = 0;
+          setShowEgg(true);
+        } else {
+          eggTimerRef.current = setTimeout(()=>{ eggClicksRef.current = 0; }, 2000);
+        }
+      }
 
       const categoryNames = {straight:"Hétero",gay:"Gay",trans:"Trans",all:"Tudo",sapphic:"Sáfica"};
       const xTypeNames    = {home:"Para Você",following:"Seguindo",keyword:"Palavra-chave",hashtag:"Hashtag",user:"Usuário"};
@@ -2211,7 +2414,7 @@
 
           <div style={{borderBottom:"1px solid var(--border)",position:"sticky",top:0,background:"rgba(0,0,0,.92)",backdropFilter:"blur(12px)",zIndex:100}}>
             <div className="page-container hdr-row" style={{maxWidth:960,margin:"0 auto",padding:"0 20px",height:56,display:"flex",alignItems:"center",gap:14}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,color:"var(--text)"}}>
+              <div onClick={onLogoClick} style={{display:"flex",alignItems:"center",gap:8,color:"var(--text)",cursor:"default",userSelect:"none"}}>
                 <div style={{color:"#1d9bf0"}}><XI/></div>
                 <span className="hdr-title-text" style={{fontWeight:800,fontSize:16,letterSpacing:"-0.3px"}}>Video Scraper</span>
               </div>
@@ -3082,6 +3285,8 @@
               onToggleFavorite={toggleFavorite} onRemove={removeHistoryEntry} onClear={clearHistory}
               onRun={h=>runHistoryEntry(h)}/>
           )}
+
+          {showEgg&&<EasterEggGame onClose={()=>setShowEgg(false)}/>}
         </div>
       );
     }
