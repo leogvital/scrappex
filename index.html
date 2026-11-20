@@ -2289,9 +2289,11 @@
       // have one clobber another's in-progress pagination state.
       // tube8/thumbzilla deliberately excluded — yt-dlp can't actually download from
       // either right now (see the platform-selector comment above), so including them
-      // here would surface results the user can't do anything with.
+      // here would surface results the user can't do anything with. hellporno excluded
+      // too — site está devolvendo 403/Cloudflare pro domínio inteiro (ver comentário
+      // na lista de abas acima).
       const ALL_PLATFORMS = ["x","xhamster","xvideos","xfree","pornhub","xnxx","tnaflix","redtube",
-                             "youporn","eporner","youjizz","nuvid","hellporno"];
+                             "youporn","eporner","youjizz","nuvid"];
       const [searchAllMode, setSearchAllMode] = useState(false);
       const [allResults,    setAllResults]    = useState([]);
       const [searchingAll,  setSearchingAll]  = useState(false);
@@ -2480,7 +2482,14 @@
                   {id:"eporner",  label:"Eporner"},
                   {id:"youjizz",  label:"YouJizz"},
                   {id:"nuvid",    label:"Nuvid"},
-                  {id:"hellporno", label:"HellPorno"},
+                  // HellPorno: site começou a devolver 403 (Cloudflare Turnstile
+                  // bloqueando o domínio inteiro — Home, busca e paginação) depois
+                  // de funcionar normalmente no dia da implementação. Pode ser
+                  // reação da Cloudflare ao volume de testes feito a partir deste
+                  // IP, ou proteção nova do site; não é algo que dê pra contornar
+                  // só ajustando headers. Backend (_scrape_hellporno) intacto, só
+                  // a aba some; reativar é só devolver esta linha:
+                  // {id:"hellporno", label:"HellPorno"},
                   {id:"all",      label:"🌐 Tudo"},
                 ].map(p=>{
                   const active = p.id==="all" ? searchAllMode : (!searchAllMode && platform===p.id);

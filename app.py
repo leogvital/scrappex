@@ -3510,11 +3510,14 @@ _SEARCH_TASK_MAX_AGE = 3600  # seconds — stale finished tasks get swept by the
 # tube8/thumbzilla deliberately excluded — yt-dlp can't actually download from
 # either right now (Tube8's extractor is broken against the site's current URL
 # scheme, Thumbzilla has no extractor at all), so "buscar em tudo" would surface
-# results the user can't do anything with. Both still work as single-platform
-# search/browse if hit directly (search_site_page, _SITE_SS) — only excluded
-# from this aggregate list.
+# results the user can't do anything with. hellporno is excluded too: the whole
+# domain started returning 403 with "cf-mitigated: challenge" (Cloudflare Turnstile
+# blocking Home, search and pagination alike) after working fine the day it was
+# implemented — may be IP-reputation-based from testing traffic, may be permanent.
+# All three still work as single-platform search/browse if hit directly
+# (search_site_page, _SITE_SS) — only excluded from this aggregate list.
 _ALL_SEARCH_PLATFORMS = ["x", "xhamster", "xvideos", "xfree", "pornhub", "xnxx", "tnaflix", "redtube",
-                          "youporn", "eporner", "youjizz", "nuvid", "hellporno"]
+                          "youporn", "eporner", "youjizz", "nuvid"]
 
 
 def _call_search_view(body):
