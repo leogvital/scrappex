@@ -834,7 +834,7 @@ def _new_site_ss():
     }
 
 
-_SITE_SS = {site: _new_site_ss() for site in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube", "youporn", "tube8", "thumbzilla", "eporner", "youjizz", "nuvid", "hellporno", "anyporn")}
+_SITE_SS = {site: _new_site_ss() for site in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube", "youporn", "tube8", "thumbzilla", "eporner", "youjizz", "nuvid", "hellporno", "anyporn", "anysex")}
 _SITE_SS_TIMEOUT = 600
 
 # ── xFree session (Selenium — both home and search load/paginate via client-side
@@ -1759,6 +1759,104 @@ def _scrape_anyporn(query, page=1, category="straight"):
     return results, (None if results else "Nenhum resultado encontrado.")
 
 
+# AnySex category → (Home base URL, combinable-Search base URL or None).
+# No "gay" path was found anywhere on the site (confirmed against its full
+# /videos/categories/ list — "bisexual" exists but isn't the same thing),
+# so gay just isn't offered here at all (unlike most other category-aware
+# sites in this app, where every confirmed orientation is at least browsable).
+# Sapphic ("lesbian") has a Home category but no combinable search — the
+# site's own search form posts to the same generic /search/ regardless of
+# which category page it was opened from, so a sapphic search just falls
+# back to the unfiltered catalog (same shape of limitation as Eporner's
+# category-ignored-in-search). Trans ("shemale") is the one exception: it's
+# a near-twin subsection with its own combinable /shemale/search/.
+_AS_CATEGORY = {
+    "straight": ("https://pt.anysex.com/videos/new/", "https://pt.anysex.com/search/"),
+    "sapphic":  ("https://pt.anysex.com/videos/categories/lesbian/", None),
+    "trans":    ("https://pt.anysex.com/shemale/videos/new/", "https://pt.anysex.com/shemale/search/"),
+}
+
+
+def _scrape_anysex(query, page=1, category="straight"):
+    """
+    Scrape one page of AnySex (pt.anysex.com) results (~24-50 videos per
+    page, 1-based). Home/category browsing and Search are both plain
+    numbered paths — no AJAX reverse-engineering needed here, unlike AnyPorn.
+
+    Category support is asymmetric: straight and trans ("shemale") both
+    paginate on Home *and* combine with a keyword search; sapphic
+    ("lesbian") only has a Home landing page — its search falls back to the
+    site's unfiltered /search/ (confirmed: the search form is identical
+    regardless of which category page opened it). No gay path exists on the
+    site at all (see `_AS_CATEGORY` above), so it's not offered as an option.
+    Returns (results_list, error_or_None).
+    """
+    import re, requests, urllib.parse
+    from html import unescape
+
+    home_base, search_base = _AS_CATEGORY.get(category, _AS_CATEGORY["straight"])
+
+    try:
+        if query:
+            base = search_base or _AS_CATEGORY["straight"][1]
+            url = base if page == 1 else f"{base}{page}/"
+            r = requests.get(url, params={"q": query}, headers=_SITE_HEADERS, timeout=20)
+        else:
+            url = home_base if page == 1 else f"{home_base}{page}/"
+            r = requests.get(url, headers=_SITE_HEADERS, timeout=20)
+        r.raise_for_status()
+    except Exception as ex:
+        return [], f"Erro ao acessar AnySex: {ex}"
+
+    html = r.text
+    positions = [m.start() for m in re.finditer(r'data-video-id="(\d+)"', html)]
+    results = []
+    for i, start in enumerate(positions):
+        end   = positions[i + 1] if i + 1 < len(positions) else len(html)
+        block = html[start:end]
+
+        id_m = re.match(r'data-video-id="(\d+)"', block)
+        vid = id_m.group(1)
+
+        # The /shemale section prefixes its own watch-page URLs with
+        # /shemale/ (e.g. /shemale/video/<id>/<slug>/, not plain /video/) —
+        # a bare /video/<id>/ 404s for those ids, confirmed against the live
+        # site. Allowing an optional "shemale/" segment handles both.
+        href_m  = re.search(r'<a href="(https://pt\.anysex\.com/(?:shemale/)?video/\d+/[^"]*)"', block)
+        # Some cards add a `loading="lazy"` attribute before `src` (same
+        # inconsistent-template quirk seen on Eporner) — match `src=` anywhere
+        # in the tag instead of assuming it's the first attribute.
+        thumb_m = re.search(r'<img[^>]*\ssrc="([^"]+)"', block)
+        title_m = re.search(r'<strong class="title">\s*([^<]+?)\s*</strong>', block)
+        dur_m   = re.search(r'<div class="duration">([\d:]+)</div>', block)
+        views_m = re.search(r'class="views">([\d.,]+[kKmM]?)\s*vistas', block)
+
+        dur_sec = 0
+        if dur_m:
+            try:
+                parts = [int(p) for p in dur_m.group(1).strip().split(":")]
+                if len(parts) == 3:
+                    dur_sec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+                elif len(parts) == 2:
+                    dur_sec = parts[0] * 60 + parts[1]
+            except ValueError:
+                pass
+
+        results.append({
+            "id":          vid,
+            "url":         href_m.group(1) if href_m else f"https://pt.anysex.com/video/{vid}/",
+            "title":       unescape(title_m.group(1)).strip() if title_m else f"AnySex #{vid}",
+            "uploader":    "",
+            "uploader_id": "",
+            "duration":    dur_sec,
+            "thumbnail":   thumb_m.group(1) if thumb_m else "",
+            "view_count":  _parse_pornhub_views(views_m.group(1)) if views_m else 0,
+            "like_count":  0,
+        })
+
+    return results, (None if results else "Nenhum resultado encontrado.")
+
+
 # ── XNXX category → URL segment. Unlike Pornhub (dedicated subdomain/path per
 # orientation), XNXX filters everything through /search/<segments>: a single
 # extra path segment before the query acts as a category filter for "gay" and
@@ -2313,6 +2411,8 @@ def search_site_page(site, query, page, sort="relevance", duration="any", catego
         results, err = _scrape_hellporno(query, page=page, category=category)
     elif site == "anyporn":
         results, err = _scrape_anyporn(query, page=page, category=category)
+    elif site == "anysex":
+        results, err = _scrape_anysex(query, page=page, category=category)
     else:
         return [], 0, f"Plataforma não suportada: {site}"
 
@@ -3454,7 +3554,7 @@ def search():
     # ── External sites (XHamster, XVideos, Pornhub, XNXX, TNAFlix) ────────────
     if platform in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube",
                     "youporn", "tube8", "thumbzilla", "eporner", "youjizz",
-                    "nuvid", "hellporno", "anyporn"):
+                    "nuvid", "hellporno", "anyporn", "anysex"):
         # query="" is valid now — it means "Home" (browse the category's landing feed)
         sort     = d.get("sort", "relevance")
         duration = d.get("duration", "any")
@@ -3630,7 +3730,7 @@ _SEARCH_TASK_MAX_AGE = 3600  # seconds — stale finished tasks get swept by the
 # All three still work as single-platform search/browse if hit directly
 # (search_site_page, _SITE_SS) — only excluded from this aggregate list.
 _ALL_SEARCH_PLATFORMS = ["x", "xhamster", "xvideos", "xfree", "pornhub", "xnxx", "tnaflix", "redtube",
-                          "youporn", "eporner", "youjizz", "nuvid", "anyporn"]
+                          "youporn", "eporner", "youjizz", "nuvid", "anyporn", "anysex"]
 
 
 def _call_search_view(body):
@@ -3696,6 +3796,8 @@ def _body_for_all_platform(platform, d):
         return {"query": q, "platform": "hellporno", "type": "search", "count": count}
     if platform == "anyporn":
         return {"query": q, "platform": "anyporn", "type": "search", "category": d.get("apCategory", "straight"), "count": count}
+    if platform == "anysex":
+        return {"query": q, "platform": "anysex", "type": "search", "category": d.get("asCategory", "straight"), "count": count}
     return {"query": q, "platform": platform, "type": "search", "sort": "relevance", "duration": "any",
             "category": d.get("siteCategory", "straight"), "count": count}
 
