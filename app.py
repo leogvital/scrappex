@@ -619,6 +619,14 @@ def build_ydl_opts(extra=None, url=None):
         # The Python API needs an ImpersonateTarget object, not the CLI's plain string.
         from yt_dlp.networking.impersonate import ImpersonateTarget
         opts["impersonate"] = ImpersonateTarget.from_str("chrome")
+    if url and "anyporn.com" in url:
+        # No dedicated yt-dlp extractor — the generic one resolves the page's
+        # JSON-LD `contentUrl` to the real CDN host (ahcdn.com), but drops the
+        # Referer it used for the first hop when following that redirect,
+        # and the CDN 403s without one. Confirmed with curl: the same CDN URL
+        # works fine with `Referer: https://anyporn.com/...` and 403s without
+        # any Referer at all, regardless of User-Agent.
+        opts["http_headers"] = {"Referer": "https://anyporn.com/"}
     if extra:
         opts.update(extra)
     return opts
@@ -826,7 +834,7 @@ def _new_site_ss():
     }
 
 
-_SITE_SS = {site: _new_site_ss() for site in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube", "youporn", "tube8", "thumbzilla", "eporner", "youjizz", "nuvid", "hellporno")}
+_SITE_SS = {site: _new_site_ss() for site in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube", "youporn", "tube8", "thumbzilla", "eporner", "youjizz", "nuvid", "hellporno", "anyporn")}
 _SITE_SS_TIMEOUT = 600
 
 # ── xFree session (Selenium — both home and search load/paginate via client-side
@@ -1648,6 +1656,109 @@ def _scrape_hellporno(query, page=1, category="straight"):
     return results, (None if results else "Nenhum resultado encontrado.")
 
 
+# AnyPorn category → URL path segment (Home/category browsing) and the
+# numeric `category_ids` value the site's own search-filter checkboxes use
+# (read straight off the search page's HTML: id="category_filter_44" labeled
+# "Gay", etc.) — two different mechanisms for the same four orientations.
+_AP_CATEGORY_SLUG = {"gay": "gay", "sapphic": "lesbian", "trans": "shemale"}
+_AP_CATEGORY_ID    = {"gay": "44", "sapphic": "60", "trans": "92"}
+
+# The search page's own "load more"/sort links are AJAX (`data-action="ajax"`),
+# not plain URLs — confirmed the block id they target
+# (`list_videos_v2_v530_videos_list_search_result_v530`) is a static template
+# id, not a per-session/per-query token (same value across repeated requests
+# and across different queries), so it's safe to hardcode rather than having
+# to fetch page 1 first just to scrape it back out.
+_AP_SEARCH_BLOCK_ID = "list_videos_v2_v530_videos_list_search_result_v530"
+
+
+def _scrape_anyporn(query, page=1, category="straight"):
+    """
+    Scrape one page of AnyPorn (anyporn.com) results (~30-40 videos per
+    page, 1-based). Unlike most of the other recently-added HTTP sites,
+    AnyPorn has real category support on both Home and Search.
+
+    Home/category browsing is plain numbered paths (`/newest/`, `/newest/2/`,
+    `/categories/gay/`, `/categories/gay/2/`, ...) and paginates normally
+    (confirmed: only a handful of ids shared between consecutive pages).
+
+    Search page 1 is a plain GET (`/search/<q>/`, optionally with a
+    `category_ids=<id>` query param — confirmed this actually filters
+    results, not just echoed back unused). Search page 2+ has no plain URL
+    at all (`/search/<q>/2/` 301-redirects somewhere nonsensical, concatenating
+    the query and the page number) — the site only paginates search results
+    via an internal AJAX endpoint (`?mode=async&function=get_block&block_id=
+    ...&from_videos=<page>&from_albums=<page>`), reverse-engineered from the
+    site's own `main.min.js` (function `v()` builds that URL, function `h()`
+    parses the `data-parameters` attribute — notably splitting a key like
+    `from_videos+from_albums` on `+` into two separate same-valued params,
+    not a literal `+` in one key name, which is what the first attempt at
+    this got wrong and silently got back page 1 again).
+    Returns (results_list, error_or_None).
+    """
+    import re, requests, urllib.parse
+    from html import unescape
+
+    cat_slug = _AP_CATEGORY_SLUG.get(category)
+    cat_id   = _AP_CATEGORY_ID.get(category, "")
+
+    try:
+        if query:
+            if page == 1:
+                url = f"https://anyporn.com/search/{urllib.parse.quote(query)}/"
+                params = {"category_ids": cat_id} if cat_id else {}
+                r = requests.get(url, params=params, headers=_SITE_HEADERS, timeout=20)
+            else:
+                url = f"https://anyporn.com/search/{urllib.parse.quote(query)}/"
+                params = {
+                    "mode": "async", "function": "get_block", "block_id": _AP_SEARCH_BLOCK_ID,
+                    "q": query, "category_ids": cat_id, "sort_by": "",
+                    "from_videos": str(page), "from_albums": str(page),
+                }
+                r = requests.get(url, params=params, headers=_SITE_HEADERS, timeout=20)
+        else:
+            base = f"https://anyporn.com/categories/{cat_slug}/" if cat_slug else "https://anyporn.com/newest/"
+            url  = base if page == 1 else f"{base}{page}/"
+            r = requests.get(url, headers=_SITE_HEADERS, timeout=20)
+        r.raise_for_status()
+    except Exception as ex:
+        return [], f"Erro ao acessar AnyPorn: {ex}"
+
+    html = r.text
+    positions = [m.start() for m in re.finditer(r"<div class='item\s*'>", html)]
+    results = []
+    for i, start in enumerate(positions):
+        end   = positions[i + 1] if i + 1 < len(positions) else len(html)
+        block = html[start:end]
+
+        href_m = re.search(r"href='/(\d+)/'", block)
+        if not href_m:
+            continue
+        vid = href_m.group(1)
+
+        thumb_m = re.search(r'data-original="([^"]+)"', block)
+        title_m = re.search(r'<strong class="title">([^<]+)</strong>', block)
+        dur_m   = re.search(r'element\.innerHTML = "(\d+)m:(\d+)s"', block)
+
+        thumb = thumb_m.group(1) if thumb_m else ""
+        if thumb.startswith("//"):
+            thumb = "https:" + thumb
+
+        results.append({
+            "id":          vid,
+            "url":         f"https://anyporn.com/{vid}/",
+            "title":       unescape(title_m.group(1)).strip() if title_m else f"AnyPorn #{vid}",
+            "uploader":    "",
+            "uploader_id": "",
+            "duration":    (int(dur_m.group(1)) * 60 + int(dur_m.group(2))) if dur_m else 0,
+            "thumbnail":   thumb,
+            "view_count":  0,
+            "like_count":  0,
+        })
+
+    return results, (None if results else "Nenhum resultado encontrado.")
+
+
 # ── XNXX category → URL segment. Unlike Pornhub (dedicated subdomain/path per
 # orientation), XNXX filters everything through /search/<segments>: a single
 # extra path segment before the query acts as a category filter for "gay" and
@@ -2200,6 +2311,8 @@ def search_site_page(site, query, page, sort="relevance", duration="any", catego
         results, err = _scrape_nuvid(query, page=page, category=category)
     elif site == "hellporno":
         results, err = _scrape_hellporno(query, page=page, category=category)
+    elif site == "anyporn":
+        results, err = _scrape_anyporn(query, page=page, category=category)
     else:
         return [], 0, f"Plataforma não suportada: {site}"
 
@@ -3341,7 +3454,7 @@ def search():
     # ── External sites (XHamster, XVideos, Pornhub, XNXX, TNAFlix) ────────────
     if platform in ("xhamster", "xvideos", "pornhub", "xnxx", "tnaflix", "redtube",
                     "youporn", "tube8", "thumbzilla", "eporner", "youjizz",
-                    "nuvid", "hellporno"):
+                    "nuvid", "hellporno", "anyporn"):
         # query="" is valid now — it means "Home" (browse the category's landing feed)
         sort     = d.get("sort", "relevance")
         duration = d.get("duration", "any")
@@ -3517,7 +3630,7 @@ _SEARCH_TASK_MAX_AGE = 3600  # seconds — stale finished tasks get swept by the
 # All three still work as single-platform search/browse if hit directly
 # (search_site_page, _SITE_SS) — only excluded from this aggregate list.
 _ALL_SEARCH_PLATFORMS = ["x", "xhamster", "xvideos", "xfree", "pornhub", "xnxx", "tnaflix", "redtube",
-                          "youporn", "eporner", "youjizz", "nuvid"]
+                          "youporn", "eporner", "youjizz", "nuvid", "anyporn"]
 
 
 def _call_search_view(body):
@@ -3581,6 +3694,8 @@ def _body_for_all_platform(platform, d):
         return {"query": q, "platform": "nuvid", "type": "search", "count": count}
     if platform == "hellporno":
         return {"query": q, "platform": "hellporno", "type": "search", "count": count}
+    if platform == "anyporn":
+        return {"query": q, "platform": "anyporn", "type": "search", "category": d.get("apCategory", "straight"), "count": count}
     return {"query": q, "platform": platform, "type": "search", "sort": "relevance", "duration": "any",
             "category": d.get("siteCategory", "straight"), "count": count}
 
