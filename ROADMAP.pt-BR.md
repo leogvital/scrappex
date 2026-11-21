@@ -27,6 +27,7 @@ Status do projeto e próximos passos. Mantido junto com o [README.pt-BR.md](READ
 | Nuvid | ✓ | ✓ (sem paginação — limitação do site) | — (sem categoria encontrada) | HTTP |
 | HellPorno | Raspa normal, **escondido da interface** — domínio inteiro agora bloqueado pelo Cloudflare Turnstile | — | — | HTTP |
 | AnyPorn | ✓ (filtro de categoria fraco — site pesa muito mais a palavra-chave) | ✓ | Hétero/Gay/Sáfica/Trans | HTTP |
+| AnySex | ✓ (Sáfica não combina com Busca — limitação do site) | ✓ | Hétero/Sáfica/Trans (sem Gay — nenhum achado) | HTTP |
 
 ### Conta e sessão
 - Login do app com usuário/senha configuráveis via `.env.local` (fora do repositório — veja `.env.local.example`), sessão persistente — sobrevive a fechar o navegador (cookie de 30 dias) e a reiniciar o servidor (chave secreta salva em disco)
@@ -89,6 +90,7 @@ Status do projeto e próximos passos. Mantido junto com o [README.pt-BR.md](READ
 - HellPorno passou de funcionando pra `403 Forbidden` reportado pelo usuário de um dia pro outro — confirmado com `curl` que `hellporno.com` agora rejeita todo caminho (Home, busca, paginação) com `cf-mitigated: challenge`, até uma requisição crua sem nenhum header customizado — ou seja, um desafio completo do Cloudflare Turnstile no domínio inteiro, não algo que dê pra contornar ajustando headers. Mesma classe de falha já vista e descartada pro SpankBang. Escondido da interface do mesmo jeito que o Tube8/Thumbzilla — ver limitações conhecidas abaixo; backend e dispatch do scraper intactos
 - Download do AnyPorn dando 403 no salto do CDN — o extrator genérico do yt-dlp resolve o `contentUrl` do JSON-LD da página do vídeo pro host de CDN de verdade (`ahcdn.com`) mas perde o Referer usado no primeiro salto, e o CDN devolve `403` sem ele (confirmado com `curl`: mesma URL, `200` com `Referer: https://anyporn.com/...`, `403` sem). Corrigido do mesmo jeito que o caso de impersonation de TLS já existente do Pornhub no `build_ydl_opts` — define `http_headers` com esse Referer sempre que a url é do anyporn.com
 - Paginação da busca do AnyPorn devolvendo a página 1 de novo em silêncio pra toda tentativa de "página 2" — o atributo `data-parameters` do próprio site codifica `from_videos+from_albums:02`, que parecia uma única chave de URL (`from_videos+from_albums`) mas na verdade são dois parâmetros separados com o mesmo valor unidos por `+` no nome da chave — o próprio JS do site divide no `+` antes de montar a requisição. Mandar como uma única chave url-encoded (`from_videos%2Bfrom_albums=02`) é aceito pelo servidor sem erro mas reserve a página 1 em silêncio; só lendo a função de parsing de verdade do site (`h()` no `main.min.js`) revelou o formato real
+- Cards da categoria shemale do AnySex caindo num link morto `/video/<id>/` sem slug — as próprias URLs de página de vídeo da seção `/shemale/` são prefixadas (`/shemale/video/<id>/<slug>/`), não o `/video/<id>/...` puro que as outras categorias usam; a regex do href só casava com a forma sem prefixo, perdendo o match completamente e caindo pra uma URL sintética que dá `404`. Corrigido permitindo um segmento opcional `shemale/` na regex em vez de assumir um caminho fixo só
 
 ---
 
@@ -106,6 +108,8 @@ Status do projeto e próximos passos. Mantido junto com o [README.pt-BR.md](READ
 - **Thumbzilla / download**: escondido da interface — o yt-dlp não tem extrator nenhum pro site ("Unsupported URL")
 - **AnyPorn / qualidade do download**: só 360p é oferecido — a página do vídeo embute um link de CDN em 720p também, mas só numa variável JS inline que o extrator genérico do yt-dlp nunca lê (ele só vê o bloco JSON-LD, que espelha só o de 360p). Não é um bug, é um teto: não existe extrator dedicado pra esse site, então não tem caminho de código que interprete essa variável JS
 - **AnyPorn / filtro de categoria na Busca**: real mas fraco — confirmado que filtra de verdade (um resultado só-trans aparece com essa categoria marcada que não aparece sem filtro, e vice-versa), mas o próprio algoritmo de relevância do site pesa muito mais a palavra-chave digitada do que a categoria, então uma página de 40 resultados normalmente só troca 1-3 resultados entre categorias
+- **AnySex / sem categoria Gay**: não existe caminho gay nenhum em lugar nenhum do site (confirmado contra a lista completa de categorias — "bisexual" é o mais próximo, não é a mesma coisa) — não é oferecido como opção, em vez de mapear pra algo que não é realmente equivalente
+- **AnySex / Busca Sáfica não combina**: o formulário de busca do site é o mesmo `/search/` genérico não importa de qual página de categoria foi aberto, então uma busca por palavra-chave sáfica cai em silêncio pro catálogo sem filtro (confirmado: resultados idênticos a uma busca hétero pra mesma palavra-chave) — mesmo tipo de limitação da categoria ignorada na busca do Eporner
 
 ---
 
@@ -115,6 +119,7 @@ Status do projeto e próximos passos. Mantido junto com o [README.pt-BR.md](READ
 - [x] YouPorn, Tube8, Thumbzilla, Eporner, YouJizz adicionados (ver tabela acima)
 - [x] Nuvid, HellPorno adicionados (ver tabela acima)
 - [x] AnyPorn adicionado (ver tabela acima)
+- [x] AnySex adicionado (ver tabela acima)
 - [ ] **Txxx**: pesquisado na mesma leva do Nuvid/HellPorno — o download via yt-dlp confirmado funcionando direto (o extrator dedicado dele é compartilhado por uma rede inteira: hclips/hdzog/hotmovs/inporn/privatehomeclips/tubepornclassic/upornia/vjav/vxxx/voyeurhit), mas raspar busca/navegação se mostrou bem mais difícil que o esperado: a página `/search/` é um SPA renderizado no cliente sem resultados vindos do servidor, a API interna dele (`videos2.php`) devolve `"Search string empty"` pro mesmo pedido que um navegador de verdade manda (um requisito de autenticação/sessão não resolvido), e tem um modal real de verificação de idade mais um anúncio sobreposto bloqueando a interação com a caixa de busca num navegador automatizado. Pausado em vez de continuar escalando esforço — precisaria investigar mais o requisito de autenticação real da API, ou se comprometer com automação completa de navegador apesar da pilha de pop-ups
 - [ ] **Motherless**: domínio nem resolve nesse servidor (falha de DNS) — não testado além disso
 - [ ] **Slutload**: domínio agora redireciona pra um site de câmera ao vivo (mesmo beco sem saída do PornRabbit), não vídeos gravados — descartado

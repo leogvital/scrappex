@@ -27,6 +27,7 @@ Project status and next steps. Kept alongside [README.md](README.md) (which docu
 | Nuvid | ✓ | ✓ (no pagination — site limitation) | — (no category found) | HTTP |
 | HellPorno | Scrapes fine, **hidden from UI** — whole domain now 403s behind Cloudflare Turnstile | — | — | HTTP |
 | AnyPorn | ✓ (category filter weak — site weighs keyword much more) | ✓ | Straight/Gay/Sapphic/Trans | HTTP |
+| AnySex | ✓ (Sapphic not combinable with Search — site limitation) | ✓ | Straight/Sapphic/Trans (no Gay — none found) | HTTP |
 
 ### Account and session
 - App login with username/password configurable via `.env.local` (outside the repository — see `.env.local.example`), persistent session — survives closing the browser (30-day cookie) and restarting the server (secret key saved to disk)
@@ -89,6 +90,7 @@ Project status and next steps. Kept alongside [README.md](README.md) (which docu
 - HellPorno went from working to a user-reported `403 Forbidden` overnight — confirmed with `curl` that `hellporno.com` now rejects every path (Home, search, pagination) with `cf-mitigated: challenge`, even a bare request with no custom headers at all, i.e. a full Cloudflare Turnstile challenge on the whole domain, not something fixable by adjusting request headers. Same failure class already seen and declined for SpankBang. Hidden from the UI the same way as Tube8/Thumbzilla — see Known limitations below; backend scraper and dispatch untouched
 - AnyPorn's generic-extractor download 403ing at the CDN hop — yt-dlp's generic extractor resolves the video page's JSON-LD `contentUrl` to the real CDN host (`ahcdn.com`) but drops the Referer it used for the first hop, and the CDN 403s without one (confirmed with `curl`: same URL, `200` with `Referer: https://anyporn.com/...`, `403` without). Fixed the same way as the existing Pornhub TLS-impersonation case in `build_ydl_opts` — sets `http_headers` with that Referer whenever the url is anyporn.com
 - AnyPorn search pagination silently returning page 1 again for every "page 2" attempt — the site's own `data-parameters` attribute encodes `from_videos+from_albums:02`, which looked like one URL key (`from_videos+from_albums`) but is actually two separate same-valued params joined by `+` in the key name — the site's own JS splits on `+` before building the request. Sending it as one url-encoded key (`from_videos%2Bfrom_albums=02`) is accepted by the server without error but silently re-serves page 1; only reading the site's own parsing function (`h()` in `main.min.js`) surfaced the real format
+- AnySex shemale-category cards getting a dead `/video/<id>/` link with no slug — the `/shemale/` section's own watch-page URLs are prefixed (`/shemale/video/<id>/<slug>/`), not the plain `/video/<id>/...` other categories use; the href regex only matched the unprefixed form, missing the match entirely and falling back to a synthetic URL that 404s. Fixed by allowing an optional `shemale/` segment in the regex instead of assuming one fixed path
 
 ---
 
@@ -106,6 +108,8 @@ Project status and next steps. Kept alongside [README.md](README.md) (which docu
 - **Thumbzilla / downloading**: hidden from the UI — yt-dlp has no extractor for the site at all ("Unsupported URL")
 - **AnyPorn / download quality**: only 360p is ever offered — the video page embeds a 720p CDN link too, but only in an inline JS variable the generic yt-dlp extractor never reads (it only sees the JSON-LD block, which mirrors just the 360p one). Not a bug, a ceiling: no dedicated extractor exists for this site, so there's no code path that parses that JS variable
 - **AnyPorn / category filter on Search**: real but weak — confirmed it does filter (a trans-only result surfaces with that category checked that doesn't appear unfiltered, and vice-versa), but the site's own relevance ranking weighs the typed keyword far more than the category, so a 40-result page typically only swaps 1-3 results between categories
+- **AnySex / no Gay category**: no gay path exists anywhere on the site (confirmed against its full category list — "bisexual" is the closest thing, not the same) — not offered as an option at all, rather than mapping it to something that isn't really equivalent
+- **AnySex / Sapphic search not combinable**: the site's search form is the same generic `/search/` regardless of which category page opened it, so a sapphic keyword search silently falls back to the unfiltered catalog (confirmed: identical results to a straight search for the same query) — same shape of limitation as Eporner's category-ignored-in-search
 
 ---
 
@@ -115,6 +119,7 @@ Project status and next steps. Kept alongside [README.md](README.md) (which docu
 - [x] YouPorn, Tube8, Thumbzilla, Eporner, YouJizz added (see table above)
 - [x] Nuvid, HellPorno added (see table above)
 - [x] AnyPorn added (see table above)
+- [x] AnySex added (see table above)
 - [ ] **Txxx**: researched as part of the same batch as Nuvid/HellPorno — yt-dlp download confirmed working directly (its dedicated extractor is shared across a whole network: hclips/hdzog/hotmovs/inporn/privatehomeclips/tubepornclassic/upornia/vjav/vxxx/voyeurhit), but scraping search/browsing turned out considerably harder than expected: the `/search/` page is a client-rendered SPA with no server-rendered results, its internal `videos2.php` API returns `"Search string empty"` for the same request a real browser sends (an unresolved auth/session requirement), and a real age-verification modal plus an ad overlay both block interacting with the search box in an automated browser. Paused rather than keep escalating effort — would need more investigation into the API's actual auth requirement, or committing to full browser automation despite the popup stacking
 - [ ] **Motherless**: domain doesn't resolve from this server at all (DNS failure) — untested beyond that
 - [ ] **Slutload**: domain now redirects to a live-cam site (same dead-end as PornRabbit), not pre-recorded videos — dropped
